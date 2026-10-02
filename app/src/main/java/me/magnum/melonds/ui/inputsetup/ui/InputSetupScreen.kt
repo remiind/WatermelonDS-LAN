@@ -39,6 +39,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.FocusRequester.Companion.FocusRequesterFactory.component1
@@ -69,6 +70,8 @@ fun InputSetupScreen(
 ) {
     val inputConfig by viewModel.inputConfiguration.collectAsStateWithLifecycle()
     val inputUnderConfiguration by viewModel.inputUnderAssignment.collectAsStateWithLifecycle()
+    val assigningCombo by viewModel.assigningCombo.collectAsStateWithLifecycle()
+    val comboConflict by viewModel.comboConflict.collectAsStateWithLifecycle()
     val slot2AnalogMapping by viewModel.slot2AnalogMapping.collectAsStateWithLifecycle()
     val slot2AxisUnderConfiguration by viewModel.slot2AxisUnderAssignment.collectAsStateWithLifecycle()
     val onInputAssignedEvent = viewModel.onInputAssignedEvent
@@ -76,10 +79,13 @@ fun InputSetupScreen(
     InputSetupScreenContent(
         inputConfig = inputConfig,
         inputUnderConfiguration = inputUnderConfiguration,
+        assigningCombo = assigningCombo,
+        comboConflict = comboConflict,
         slot2AnalogMapping = slot2AnalogMapping,
         slot2AxisUnderConfiguration = slot2AxisUnderConfiguration,
         onInputAssignedEvent = onInputAssignedEvent,
         onInputClick = viewModel::startInputAssignment,
+        onComboClick = viewModel::startComboAssignment,
         onClearInputClick = viewModel::clearInputAssignment,
         onSlot2AxisXClick = { viewModel.startSlot2AxisAssignment(InputSetupViewModel.Slot2AnalogAxisTarget.X) },
         onSlot2AxisYClick = { viewModel.startSlot2AxisAssignment(InputSetupViewModel.Slot2AnalogAxisTarget.Y) },
@@ -96,10 +102,13 @@ fun InputSetupScreen(
 private fun InputSetupScreenContent(
     inputConfig: List<InputConfig>,
     inputUnderConfiguration: Input?,
+    assigningCombo: Boolean = false,
+    comboConflict: Input? = null,
     slot2AnalogMapping: Slot2AnalogMapping,
     slot2AxisUnderConfiguration: InputSetupViewModel.Slot2AnalogAxisTarget?,
     onInputAssignedEvent: Flow<Input>,
     onInputClick: (Input) -> Unit,
+    onComboClick: (Input) -> Unit,
     onClearInputClick: (Input) -> Unit,
     onSlot2AxisXClick: () -> Unit,
     onSlot2AxisYClick: () -> Unit,
@@ -144,6 +153,7 @@ private fun InputSetupScreenContent(
                         config = it,
                         isBeingConfigured = it.input == inputUnderConfiguration,
                         onClick = { onInputClick(it.input) },
+                        onComboClick = { onComboClick(it.input) },
                         onClearClick = { onClearInputClick(it.input) },
                     )
                 }
@@ -162,6 +172,8 @@ private fun InputSetupScreenContent(
             }
 
             val waitingLabel = when {
+                comboConflict != null -> stringResource(R.string.input_combo_conflict, getInputName(comboConflict) ?: "")
+                assigningCombo && inputUnderConfiguration != null -> stringResource(R.string.waiting_for_combo)
                 inputUnderConfiguration != null -> stringResource(R.string.waiting_for_input)
                 slot2AxisUnderConfiguration == InputSetupViewModel.Slot2AnalogAxisTarget.X -> stringResource(R.string.slot2_analog_waiting_axis_x)
                 slot2AxisUnderConfiguration == InputSetupViewModel.Slot2AnalogAxisTarget.Y -> stringResource(R.string.slot2_analog_waiting_axis_y)
@@ -360,9 +372,11 @@ private fun Input(
     config: InputConfig,
     isBeingConfigured: Boolean,
     onClick: () -> Unit,
+    onComboClick: () -> Unit,
     onClearClick: () -> Unit,
 ) {
     val (main, clear) = remember { FocusRequester.createRefs() }
+    val combo = remember { FocusRequester() }
     val colors = me.magnum.melonds.ui.theme.watermelon
     val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -376,7 +390,7 @@ private fun Input(
             .background(if (isFocused || isBeingConfigured) colors.surface3 else colors.surface2)
             .let { if (isFocused || isBeingConfigured) it.border(2.dp, colors.red, shape) else it }
             .focusRequester(main)
-            .focusProperties { end = if (config.hasKeyAssigned()) clear else FocusRequester.Default }
+            .focusProperties { end = if (!config.input.isSystemInput) combo else if (config.hasKeyAssigned()) clear else FocusRequester.Default }
             .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
             .padding(start = 14.dp, top = 11.dp, end = 6.dp, bottom = 11.dp),
     ) {
@@ -391,8 +405,9 @@ private fun Input(
                     assignments.joinToString(" / ") { assignment ->
                         when (assignment) {
                             is InputConfig.Assignment.Key -> {
-                                val keyCodeString = KeyEvent.keyCodeToString(assignment.keyCode)
-                                keyCodeString.replace("KEYCODE", "").replace("_", " ").trim()
+                                assignment.keyCodes.joinToString(" + ") { key ->
+                                    KeyEvent.keyCodeToString(key).replace("KEYCODE", "").replace("_", " ").trim()
+                                }
                             }
                             is InputConfig.Assignment.Axis -> {
                                 val axisString = MotionEvent.axisToString(assignment.axisCode)
@@ -417,9 +432,20 @@ private fun Input(
                 color = MaterialTheme.colors.onBackground,
             )
         }
+        if (!config.input.isSystemInput) {
+            TextButton(
+                modifier = Modifier.focusRequester(combo).focusProperties {
+                    start = main
+                    end = if (config.hasKeyAssigned()) clear else FocusRequester.Default
+                },
+                onClick = onComboClick,
+            ) {
+                Text(stringResource(R.string.input_combo))
+            }
+        }
         if (config.hasKeyAssigned()) {
             IconButton(
-                modifier = Modifier.focusRequester(clear).focusProperties { start = main },
+                modifier = Modifier.focusRequester(clear).focusProperties { start = if (!config.input.isSystemInput) combo else main },
                 onClick = onClearClick,
             ) {
                 Icon(
@@ -440,11 +466,12 @@ private fun WaitingForInputOverlay(message: String, onCancel: () -> Unit) {
             .clickable(enabled = true, onClick = { })
     ) {
         Column(
-            modifier = Modifier.align(Alignment.Center),
+            modifier = Modifier.align(Alignment.Center).padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
                 text = message,
+                textAlign = TextAlign.Center,
                 style = MaterialTheme.typography.h6,
             )
             Spacer(Modifier.height(16.dp))
@@ -488,6 +515,9 @@ private fun getInputName(input: Input): String? {
         Input.QUICK_SAVE -> R.string.input_quick_save
         Input.QUICK_LOAD -> R.string.input_quick_load
         Input.REWIND -> R.string.rewind
+        Input.CYCLE_LAYOUT -> R.string.input_cycle_layout
+        Input.EXIT_GAME -> R.string.input_exit_game
+        Input.SCREENSHOT -> R.string.input_screenshot
         else -> return null
     }
 
@@ -542,6 +572,7 @@ private fun PreviewInputSetupScreen() {
             slot2AxisUnderConfiguration = null,
             onInputAssignedEvent = emptyFlow(),
             onInputClick = { },
+            onComboClick = { },
             onClearInputClick = { },
             onSlot2AxisXClick = { },
             onSlot2AxisYClick = { },

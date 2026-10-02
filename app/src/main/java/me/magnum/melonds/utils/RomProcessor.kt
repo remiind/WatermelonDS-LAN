@@ -53,7 +53,11 @@ object RomProcessor {
 		).sortedBy { it.offset }
 
 		for (section in requiredSections) {
-			val data = sectionReader.readSection(section.offset, section.size) ?: return null
+			val data = sectionReader.readSection(
+				section.offset,
+				section.size,
+				padToSize = section.type == RequiredRomSection.Type.BANNER,
+			) ?: return null
 			when (section.type) {
 				RequiredRomSection.Type.ARM9 -> arm9Bootcode = data
 				RequiredRomSection.Type.ARM7 -> arm7Bootcode = data
@@ -268,7 +272,7 @@ object RomProcessor {
 		private val buffer = ByteArray(8192)
 		private var position = 0L
 
-		fun readSection(offset: Int, size: Int): ByteArray? {
+		fun readSection(offset: Int, size: Int, padToSize: Boolean = false): ByteArray? {
 			if (offset < 0 || size < 0) {
 				return null
 			}
@@ -290,7 +294,7 @@ object RomProcessor {
 			while (totalRead < size) {
 				val read = stream.read(section, totalRead, size - totalRead)
 				if (read <= 0) {
-					return null
+					return if (read < 0 && padToSize) section else null
 				}
 				totalRead += read
 				position += read

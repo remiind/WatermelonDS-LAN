@@ -30,12 +30,12 @@ private:
     GLuint posAttribLocation;
     GLuint texCoordAttribLocation;
     bool screenshotRequested;
+    bool screenshotSucceeded;
     bool stopped;
 
     void setupFrameBuffer();
     void setupShaders();
     void setupVertexBuffers();
-    void notifyScreenshotReady();
 
     std::mutex screenshotMutex;
     std::condition_variable screenshotCondition;
@@ -48,6 +48,7 @@ public:
 
     bool takeScreenshot();
     bool isScreenshotPending();
+    void notifyScreenshotReady(bool success = true);
 
     void cleanup();
 

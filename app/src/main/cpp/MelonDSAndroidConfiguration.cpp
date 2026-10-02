@@ -182,6 +182,58 @@ MelonDSAndroid::VulkanFilterMode mapVulkanFilterMode(jint ordinal)
 
 MelonDSAndroid::EmulatorConfiguration MelonDSAndroidConfiguration::buildEmulatorConfiguration(JNIEnv* env, jobject emulatorConfiguration) {
     jclass emulatorConfigurationClass = env->GetObjectClass(emulatorConfiguration);
+    if (emulatorConfigurationClass == nullptr || env->ExceptionCheck())
+        return {};
+    const jfieldID lowLatencyField = env->GetFieldID(emulatorConfigurationClass, "lowLatencyEnabled", "Z");
+    if (lowLatencyField == nullptr || env->ExceptionCheck())
+    {
+        env->DeleteLocalRef(emulatorConfigurationClass);
+        return {};
+    }
+    const bool lowLatencyEnabled = env->GetBooleanField(emulatorConfiguration, lowLatencyField) == JNI_TRUE;
+    if (env->ExceptionCheck())
+    {
+        env->DeleteLocalRef(emulatorConfigurationClass);
+        return {};
+    }
+    const jfieldID rtcOffsetField = env->GetFieldID(emulatorConfigurationClass, "rtcOffsetMinutes", "I");
+    if (rtcOffsetField == nullptr || env->ExceptionCheck())
+    {
+        env->DeleteLocalRef(emulatorConfigurationClass);
+        return {};
+    }
+    const jint rtcOffsetMinutes = env->GetIntField(emulatorConfiguration, rtcOffsetField);
+    if (env->ExceptionCheck())
+    {
+        env->DeleteLocalRef(emulatorConfigurationClass);
+        return {};
+    }
+    std::string wfcSettingsPath;
+    const jfieldID wfcPathField = env->GetFieldID(emulatorConfigurationClass, "wfcSettingsPath", "Ljava/lang/String;");
+    if (wfcPathField == nullptr || env->ExceptionCheck())
+    {
+        env->DeleteLocalRef(emulatorConfigurationClass);
+        return {};
+    }
+    jstring wfcPathString = static_cast<jstring>(env->GetObjectField(emulatorConfiguration, wfcPathField));
+    if (env->ExceptionCheck())
+    {
+        env->DeleteLocalRef(emulatorConfigurationClass);
+        return {};
+    }
+    if (wfcPathString != nullptr)
+    {
+        const char* value = env->GetStringUTFChars(wfcPathString, nullptr);
+        if (value == nullptr || env->ExceptionCheck())
+        {
+            env->DeleteLocalRef(wfcPathString);
+            env->DeleteLocalRef(emulatorConfigurationClass);
+            return {};
+        }
+        wfcSettingsPath = value;
+        env->ReleaseStringUTFChars(wfcPathString, value);
+        env->DeleteLocalRef(wfcPathString);
+    }
     jclass uriClass = env->FindClass("android/net/Uri");
     jclass consoleTypeEnumClass = env->FindClass("me/magnum/melonds/domain/model/ConsoleType");
     jclass audioBitrateEnumClass = env->FindClass("me/magnum/melonds/domain/model/AudioBitrate");
@@ -258,11 +310,14 @@ MelonDSAndroid::EmulatorConfiguration MelonDSAndroidConfiguration::buildEmulator
     finalEmulatorConfiguration.dsiFirmwarePath = dsiFirmwarePath;
     finalEmulatorConfiguration.dsiNandPath = dsiNandPath;
     finalEmulatorConfiguration.internalFilesDir = internalDir;
+    finalEmulatorConfiguration.wfcSettingsPath = std::move(wfcSettingsPath);
     finalEmulatorConfiguration.fastForwardSpeedMultiplier = fastForwardMaxSpeed;
     finalEmulatorConfiguration.frameLimitSpeedMultiplier = frameLimitSpeed;
     finalEmulatorConfiguration.frameskipMode = frameskipMode;
     finalEmulatorConfiguration.frameskipManualValue = frameskipManualValue;
     finalEmulatorConfiguration.vulkanDrsEnabled = vulkanDrsEnabled;
+    finalEmulatorConfiguration.lowLatencyEnabled = lowLatencyEnabled;
+    finalEmulatorConfiguration.rtcOffsetMinutes = rtcOffsetMinutes >= -1440 && rtcOffsetMinutes <= 1440 ? rtcOffsetMinutes : 0;
     finalEmulatorConfiguration.showBootScreen = showBootScreen;
     finalEmulatorConfiguration.useJit = useJit;
     finalEmulatorConfiguration.hgEngineFixEnabled = hgEngineFixEnabled;

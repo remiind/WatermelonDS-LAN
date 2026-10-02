@@ -67,12 +67,16 @@ class RomDetailsRetroAchievementsViewModel @Inject constructor(
     fun refreshOfflineAchievementsStatus() {
         viewModelScope.launch {
             val isSyncing = _offlineAchievementsUiState.value.isSyncing
-            _offlineAchievementsUiState.value = buildOfflineAchievementsUiState(isSyncing)
+            val refreshed = buildOfflineAchievementsUiState(isSyncing)
+            _offlineAchievementsUiState.value = refreshed.copy(
+                isSyncing = _offlineAchievementsUiState.value.isSyncing,
+                isDiscarding = _offlineAchievementsUiState.value.isDiscarding,
+            )
         }
     }
 
     fun syncOfflineAchievementsNow() {
-        if (_offlineAchievementsUiState.value.isSyncing) return
+        if (!_offlineAchievementsUiState.value.canSyncNow) return
 
         viewModelScope.launch {
             val userAuth = retroAchievementsRepository.getUserAuthentication() ?: return@launch
@@ -94,6 +98,27 @@ class RomDetailsRetroAchievementsViewModel @Inject constructor(
             if (syncResult.isSuccess) {
                 val skipped = syncResult.getOrNull()?.skipped.orEmpty()
                 emitOfflineAchievementsNotSyncedToasts(skipped)
+            }
+        }
+    }
+
+    fun discardExpiredOfflineAchievements() {
+        if (!_offlineAchievementsUiState.value.canDiscardExpired) return
+        _offlineAchievementsUiState.value = _offlineAchievementsUiState.value.copy(isDiscarding = true)
+        viewModelScope.launch {
+            try {
+                val userAuth = retroAchievementsRepository.getUserAuthentication() ?: return@launch
+                val contentId = getRom().retroAchievementsHash
+                val result = withContext(Dispatchers.IO) {
+                    offlineLedgerRepository.discardExpiredUnlocks(userAuth.username, contentId)
+                }
+                if (result.isFailure) {
+                    _toastEvent.tryEmit(RomDetailsToastEvent.OfflineLedgerDiscardFailed)
+                }
+                retryLoadAchievements()
+            } finally {
+                _offlineAchievementsUiState.value = _offlineAchievementsUiState.value.copy(isDiscarding = false)
+                refreshOfflineAchievementsStatus()
             }
         }
     }

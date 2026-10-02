@@ -128,8 +128,9 @@ bool capture3dSourceLineHasAnyUsefulPixel(const melonDS::u32* capture3dSource, i
 
 }
 
-VulkanOutput::VulkanOutput()
-    : lastValidTopPacked(kPackedScreenWordCount),
+VulkanOutput::VulkanOutput(bool lowLatencyEnabled)
+    : lowLatencyEnabled(lowLatencyEnabled),
+      lastValidTopPacked(kPackedScreenWordCount),
       lastValidBottomPacked(kPackedScreenWordCount),
       exactVisibleRegularComp7TopPacked(kPackedScreenWordCount)
 {
@@ -627,7 +628,8 @@ constexpr VkDeviceSize kFaithfulAtlasLineas     = 0x195000;
 constexpr VkDeviceSize kFaithfulAtlasCapStash   = 0x1F5000;
 
 constexpr VkDeviceSize kFaithfulAtlasModo2      = 0x225000;
-constexpr VkDeviceSize kFaithfulAtlasSize       = 0x23D000;
+constexpr VkDeviceSize kFaithfulAtlasLine3D     = 0x23D000;
+constexpr VkDeviceSize kFaithfulAtlasSize       = 0x26D000;
 
 constexpr VkDeviceSize kFaithfulAtlasVivo       = kFaithfulAtlasSize;
 constexpr VkDeviceSize kFaithfulAtlasTotal      = 2u * kFaithfulAtlasSize;
@@ -1291,8 +1293,9 @@ void VulkanOutput::uploadFaithfulAtlasPreFrameLocked(melonDS::GPU& gpu,
 
     sr->DeriveFaithfulPendingVramDirty();
 
-    const u32 ranuraPre = desdeTail ? (faithfulRing + 1u) % kFielRanuras
-                                    : (faithfulRing + 2u) % kFielRanuras;
+    const u32 ranuraPre = lowLatencyEnabled || desdeTail
+        ? (faithfulRing + 1u) % kFielRanuras
+        : (faithfulRing + 2u) % kFielRanuras;
     if (faithfulAtlasMappedPtr[ranuraPre] == nullptr)
         return;
 
@@ -3520,6 +3523,10 @@ void VulkanOutput::uploadFaithfulAtlas(melonDS::GPU& gpu)
         sr->GetFaithfulPrevCaptureProductPixelMask(1u);
     publicarLineas(atlas + kFaithfulAtlasLineas, coloresPrev,
                    mascaraPrevA, mascaraPrevB, true);
+    if ((sr->GetFaithfulPrevFrameMeta()[6] & 1u) != 0u)
+        std::memcpy(atlas + kFaithfulAtlasLine3D,
+                    sr->GetFaithfulPrevLine3DOperands(),
+                    kPixelesPantalla * sizeof(u32));
 
     {
         if (capProductoVivo.valid && capProductoVivo.materialComplete
@@ -8043,6 +8050,31 @@ bool VulkanOutput::getExactFaithfulNativeProjectionIdentity(
         return false;
     renderProductEpoch = resource.renderer3dSnapshotSourceEpoch;
     sequence = resource.renderer3dSnapshotSourceSequence;
+    return true;
+}
+
+bool VulkanOutput::getFramePresentationDependency(
+    const Frame* frame, VkSemaphore& semaphore, u64& value) const
+{
+    semaphore = VK_NULL_HANDLE;
+    value = 0;
+    if (!initialized || !useTimelineSemaphores || timelineSemaphore == VK_NULL_HANDLE
+        || frame == nullptr || frame->backend != FrameBackend::VulkanImage
+        || frame->renderTimelineValue == 0)
+        return false;
+
+    std::scoped_lock lifetimeLock(faithfulLifetimeLock);
+    const auto it = resources.find(const_cast<Frame*>(frame));
+    if (it == resources.end())
+        return false;
+    const auto& resource = it->second;
+    if (resource.faithfulComposedFrameId != frame->frameId
+        || resource.submissionValue != frame->renderTimelineValue
+        || resource.image == VK_NULL_HANDLE || resource.imageView == VK_NULL_HANDLE)
+        return false;
+
+    semaphore = timelineSemaphore;
+    value = frame->renderTimelineValue;
     return true;
 }
 

@@ -277,12 +277,14 @@ namespace MelonDSAndroid {
     extern void pauseAfterCurrentFramePublication();
     extern void pause();
     extern void resume();
+    extern void requestRtcSync();
     extern void reset();
     extern bool saveState(const char* path);
     extern bool loadState(const char* path);
     extern bool loadRewindState(melonDS::RewindSaveState rewindSaveState);
     extern RewindWindow getRewindWindow();
     extern bool takeScreenshot();
+    extern std::vector<u32> getScreenshotPixels();
     extern void stop();
     extern void cleanup();
 }

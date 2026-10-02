@@ -140,6 +140,7 @@ fun RewindOverlay(
                     (maxHeight - 24.dp) * (2f / 3f),
                 ).coerceAtLeast(1.dp)
                 LazyRow(
+                    reverseLayout = true,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,

@@ -34,6 +34,7 @@ import me.magnum.melonds.databinding.ViewLayoutEditorManagerBinding
 import me.magnum.melonds.domain.model.RuntimeBackground
 import me.magnum.melonds.domain.model.consoleAspectRatio
 import me.magnum.melonds.domain.model.layout.LayoutComponent
+import me.magnum.melonds.domain.model.layout.VirtualButtonMode
 import me.magnum.melonds.extensions.setBackgroundMode
 import me.magnum.melonds.ui.common.component.dialog.TextInputDialog
 import me.magnum.melonds.ui.common.component.dialog.TextInputDialogState
@@ -254,6 +255,10 @@ class LayoutEditorManagerView(
         binding.buttonEditSize.setOnClickListener {
             openSelectedViewSizeDialog()
         }
+        binding.buttonInputMode.captureEditTargetOnTouchDown()
+        binding.buttonInputMode.setOnClickListener {
+            openButtonModeDialog()
+        }
         binding.buttonCenterHorizontal.setOnClickListener {
             binding.viewLayoutEditor.centerSelectedViewHorizontally()
         }
@@ -276,6 +281,8 @@ class LayoutEditorManagerView(
             selectedViewIsScreen = view.component.isScreen()
             selectedViewSupportsAspectRatio = view.component.supportsAspectRatioSelection()
             selectedScreenComponent = view.component
+            binding.buttonInputMode.isVisible = view.component.supportsButtonMode()
+            binding.buttonInputMode.text = resources.getString(R.string.button_mode_value, buttonModeLabel(view.buttonMode))
             selectedAspectRatio = when (view.component) {
                 LayoutComponent.TOP_SCREEN -> topAspectRatio
                 LayoutComponent.BOTTOM_SCREEN -> bottomAspectRatio
@@ -525,13 +532,14 @@ class LayoutEditorManagerView(
             return
         }
 
-        val actionLabels = listOf(
+        val actionLabels = mutableListOf(
             R.string.label_position,
             R.string.label_size,
             R.string.center_horizontal,
             R.string.center_vertical,
             R.string.delete,
         )
+        if (editor.getSelectedComponent()?.supportsButtonMode() == true) actionLabels.add(R.string.button_mode)
         val themedContext = android.view.ContextThemeWrapper(context, R.style.AppTheme)
         AlertDialog.Builder(themedContext)
             .setTitle(R.string.edit)
@@ -542,7 +550,35 @@ class LayoutEditorManagerView(
                     R.string.center_horizontal -> editor.centerSelectedViewHorizontally()
                     R.string.center_vertical -> editor.centerSelectedViewVertically()
                     R.string.delete -> editor.deleteSelectedView()
+                    R.string.button_mode -> openButtonModeDialog()
                 }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .showInCurrentWindow()
+    }
+
+    private fun buttonModeLabel(mode: VirtualButtonMode): String {
+        return resources.getString(when (mode) {
+            VirtualButtonMode.NORMAL -> R.string.button_mode_normal
+            VirtualButtonMode.TOGGLE -> R.string.button_mode_toggle
+            VirtualButtonMode.TURBO -> R.string.button_mode_turbo
+        })
+    }
+
+    private fun openButtonModeDialog() {
+        val editor = binding.viewLayoutEditor
+        val component = pendingEditTargetComponent ?: editor.getSelectedComponent() ?: return
+        if (!component.supportsButtonMode()) return
+        val componentView = editor.getLayoutComponentView(component) ?: return
+        val modes = VirtualButtonMode.entries
+        val themedContext = android.view.ContextThemeWrapper(context, R.style.AppTheme)
+        AlertDialog.Builder(themedContext)
+            .setTitle(R.string.button_mode)
+            .setSingleChoiceItems(modes.map { buttonModeLabel(it) }.toTypedArray(), modes.indexOf(componentView.buttonMode)) { dialog, which ->
+                editor.setComponentButtonMode(component, modes[which])
+                binding.buttonInputMode.text = resources.getString(R.string.button_mode_value, buttonModeLabel(modes[which]))
+                listener?.onStoreLayoutChanges()
+                dialog.dismiss()
             }
             .setNegativeButton(R.string.cancel, null)
             .showInCurrentWindow()
@@ -675,7 +711,11 @@ class LayoutEditorManagerView(
     private fun openButtonsMenu() {
         hideBottomControls()
         val instantiatedComponents = binding.viewLayoutEditor.getInstantiatedComponents()
-        val componentsToShow = LayoutComponent.entries.filterNot { instantiatedComponents.contains(it) }
+        val componentsToShow = LayoutComponent.entries.filter { candidate ->
+            candidate !in instantiatedComponents && instantiatedComponents.none { current ->
+                current.matchingInputs.any { it in candidate.matchingInputs }
+            }
+        }
 
         val themedContext = android.view.ContextThemeWrapper(context, R.style.AppTheme)
         val dialogBuilder = AlertDialog.Builder(themedContext)

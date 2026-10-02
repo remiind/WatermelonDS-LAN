@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include "renderer/Renderer.h"
 #include "renderer/VulkanFilterMode.h"
 
@@ -104,6 +105,7 @@ typedef struct
     char* dsiFirmwarePath;
     char* dsiNandPath;
     char* internalFilesDir;
+    std::string wfcSettingsPath;
     float fastForwardSpeedMultiplier;
     float frameLimitSpeedMultiplier;
 
@@ -111,6 +113,8 @@ typedef struct
     int frameskipManualValue;
 
     bool vulkanDrsEnabled;
+    bool lowLatencyEnabled = false;
+    int rtcOffsetMinutes = 0;
     bool showBootScreen;
     bool useJit;
     bool hgEngineFixEnabled;

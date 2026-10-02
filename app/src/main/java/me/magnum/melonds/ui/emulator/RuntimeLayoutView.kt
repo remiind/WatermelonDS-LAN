@@ -15,6 +15,8 @@ import me.magnum.melonds.ui.emulator.input.DpadInputHandler
 import me.magnum.melonds.ui.emulator.input.FrontendInputHandler
 import me.magnum.melonds.ui.emulator.input.HybridScreenTouchscreenInputHandler
 import me.magnum.melonds.ui.emulator.input.IInputListener
+import me.magnum.melonds.ui.emulator.input.Slot2AnalogInput
+import me.magnum.melonds.ui.emulator.input.Slot2AnalogInputHandler
 import me.magnum.melonds.ui.emulator.input.SingleButtonInputHandler
 import me.magnum.melonds.ui.emulator.input.TouchscreenInputHandler
 import me.magnum.melonds.ui.emulator.input.view.ToggleableImageView
@@ -35,6 +37,15 @@ class RuntimeLayoutView(context: Context, attrs: AttributeSet? = null) : LayoutV
     private var isSoftInputVisible = true
     private var areScreensSwapped = false
     private var connectedControllersState: ConnectedControllersState = ConnectedControllersState.NoControllers
+    private var slot2AnalogInput: Slot2AnalogInput? = null
+    private var slot2AnalogHandler: Slot2AnalogInputHandler? = null
+    private val virtualButtonInputs = mutableMapOf<LayoutComponent, SingleButtonInputHandler>()
+
+    fun setSlot2AnalogInput(input: Slot2AnalogInput) {
+        releaseVirtualButtonInputs()
+        slot2AnalogInput = input
+        updateInputs()
+    }
 
     fun setFrontendInputHandler(frontendInputHandler: FrontendInputHandler) {
         this.frontendInputHandler = frontendInputHandler
@@ -80,6 +91,9 @@ class RuntimeLayoutView(context: Context, attrs: AttributeSet? = null) : LayoutV
     }
 
     private fun updateInputs() {
+        releaseVirtualButtonInputs()
+        virtualButtonInputs.clear()
+        slot2AnalogHandler = null
         val currentRuntimeLayout = currentRuntimeLayout
         if (currentRuntimeLayout == null) {
             isGone = true
@@ -89,10 +103,24 @@ class RuntimeLayoutView(context: Context, attrs: AttributeSet? = null) : LayoutV
         isVisible = true
         val inputAlpha = currentRuntimeLayout.softInputOpacity / 100f
 
+        slot2AnalogInput?.let { input ->
+            getLayoutComponentView(LayoutComponent.SLOT2_ANALOG)?.view?.let { view ->
+                Slot2AnalogInputHandler(input).also {
+                    slot2AnalogHandler = it
+                    view.setOnTouchListener(it)
+                }
+            }
+        }
         val enableHapticFeedback = currentRuntimeLayout.isHapticFeedbackEnabled
         systemInputHandler?.let {
             getLayoutComponentView(LayoutComponent.DPAD)?.view?.setOnTouchListener(DpadInputHandler(it, enableHapticFeedback, touchVibrator))
             getLayoutComponentView(LayoutComponent.BUTTONS)?.view?.setOnTouchListener(ButtonsInputHandler(it, enableHapticFeedback, touchVibrator))
+            for (component in listOf(LayoutComponent.BUTTON_A, LayoutComponent.BUTTON_B, LayoutComponent.BUTTON_X, LayoutComponent.BUTTON_Y)) {
+                val componentView = getLayoutComponentView(component) ?: continue
+                val handler = SingleButtonInputHandler(it, component.matchingInputs.single(), enableHapticFeedback, touchVibrator, componentView.buttonMode)
+                virtualButtonInputs[component] = handler
+                componentView.view.setOnTouchListener(handler)
+            }
             getLayoutComponentView(LayoutComponent.BUTTON_L)?.view?.setOnTouchListener(SingleButtonInputHandler(it, Input.L, enableHapticFeedback, touchVibrator))
             getLayoutComponentView(LayoutComponent.BUTTON_R)?.view?.setOnTouchListener(SingleButtonInputHandler(it, Input.R, enableHapticFeedback, touchVibrator))
             getLayoutComponentView(LayoutComponent.BUTTON_SELECT)?.view?.setOnTouchListener(SingleButtonInputHandler(it, Input.SELECT, enableHapticFeedback, touchVibrator))
@@ -135,6 +163,23 @@ class RuntimeLayoutView(context: Context, attrs: AttributeSet? = null) : LayoutV
         getLayoutComponentView(nonTouchScreenComponent)?.view?.setOnTouchListener(null)
     }
 
+    fun releaseVirtualButtonInputs() {
+        slot2AnalogHandler?.release()
+        virtualButtonInputs.values.forEach { it.release() }
+    }
+
+    override fun destroyLayout() {
+        releaseVirtualButtonInputs()
+        virtualButtonInputs.clear()
+        slot2AnalogHandler = null
+        super.destroyLayout()
+    }
+
+    override fun onDetachedFromWindow() {
+        releaseVirtualButtonInputs()
+        super.onDetachedFromWindow()
+    }
+
     private fun updateVisibility() {
         val currentConnectedControllersState = connectedControllersState
         var hiddenComponents = when(currentRuntimeLayout?.softInputBehaviour) {
@@ -144,6 +189,11 @@ class RuntimeLayoutView(context: Context, attrs: AttributeSet? = null) : LayoutV
                     ConnectedControllersState.NoControllers -> emptyList()
                     is ConnectedControllersState.ControllersConnected -> listOf(
                         LayoutComponent.BUTTONS,
+                        LayoutComponent.BUTTON_A,
+                        LayoutComponent.BUTTON_B,
+                        LayoutComponent.BUTTON_X,
+                        LayoutComponent.BUTTON_Y,
+                        LayoutComponent.SLOT2_ANALOG,
                         LayoutComponent.DPAD,
                         LayoutComponent.BUTTON_L,
                         LayoutComponent.BUTTON_R,
@@ -157,7 +207,7 @@ class RuntimeLayoutView(context: Context, attrs: AttributeSet? = null) : LayoutV
                 is ConnectedControllersState.ControllersConnected -> {
                     LayoutComponent.entries.filter {
                         // The component can be hidden if all matching inputs are assigned to connected controllers
-                        it.matchingInputs.all {
+                        it != LayoutComponent.SLOT2_ANALOG && it.matchingInputs.all {
                             currentConnectedControllersState.assignedInputs.contains(it)
                         }
                     }
@@ -179,6 +229,8 @@ class RuntimeLayoutView(context: Context, attrs: AttributeSet? = null) : LayoutV
 
         hiddenComponents.forEach { component ->
             if (!component.isScreen()) {
+                if (component == LayoutComponent.SLOT2_ANALOG) slot2AnalogHandler?.release()
+                virtualButtonInputs[component]?.release()
                 getLayoutComponentView(component)?.view?.isVisible = false
             }
         }

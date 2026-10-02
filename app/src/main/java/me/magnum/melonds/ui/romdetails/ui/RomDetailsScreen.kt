@@ -52,6 +52,7 @@ fun RomDetailsScreen(
     onRetroAchievementsRetryLoad: () -> Unit,
     onViewAchievement: (RAAchievement) -> Unit,
     onOfflineSyncNow: () -> Unit,
+    onOfflineDiscardExpired: () -> Unit,
     onSendSaveFile: () -> Unit,
     onImportSaveFile: () -> Unit,
     onAchievementFocused: (me.magnum.melonds.ui.common.achievements.ui.model.AchievementUiModel?) -> Unit = {},
@@ -145,6 +146,7 @@ fun RomDetailsScreen(
                         contentPadding = contentPadding,
                         offlineAchievementsUiState = offlineAchievementsUiState,
                         onSyncOfflineNow = onOfflineSyncNow,
+                        onDiscardExpired = onOfflineDiscardExpired,
                     )
                 }
             }

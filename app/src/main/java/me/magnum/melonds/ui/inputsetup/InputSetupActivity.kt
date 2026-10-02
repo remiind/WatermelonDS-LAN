@@ -138,6 +138,12 @@ class InputSetupActivity : AppCompatActivity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (viewModel.assigningCombo.value && event.keyCode != KeyEvent.KEYCODE_BACK) {
+            if (event.repeatCount == 0 && event.action in listOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP)) {
+                viewModel.updateComboKey(event.keyCode, event.deviceId, event.action == KeyEvent.ACTION_DOWN)
+            }
+            return true
+        }
         if (event.action == KeyEvent.ACTION_DOWN && viewModel.inputUnderAssignment.value != null) {
             @SuppressLint("GestureBackNavigation")
             if (event.keyCode != KeyEvent.KEYCODE_BACK) {
@@ -146,5 +152,10 @@ class InputSetupActivity : AppCompatActivity() {
             }
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    override fun onPause() {
+        viewModel.stopAnyAssignment()
+        super.onPause()
     }
 }

@@ -114,6 +114,7 @@ import me.magnum.melonds.ui.emulator.input.EmulatorRumbleManager
 import me.magnum.melonds.ui.emulator.input.FrontendInputHandler
 import me.magnum.melonds.ui.emulator.input.INativeInputListener
 import me.magnum.melonds.ui.emulator.input.InputProcessor
+import me.magnum.melonds.ui.emulator.input.Slot2AnalogInput
 import me.magnum.melonds.ui.emulator.input.MelonTouchHandler
 import me.magnum.melonds.ui.emulator.model.EmulatorOverlay
 import me.magnum.melonds.ui.emulator.model.EmulatorState
@@ -258,6 +259,7 @@ class EmulatorActivity : AppCompatActivity() {
     private lateinit var mainScreenRenderer: DSRenderer
     private lateinit var melonTouchHandler: MelonTouchHandler
     private lateinit var nativeInputListener: INativeInputListener
+    private val slot2AnalogInput = Slot2AnalogInput(MelonEmulator::setSlot2AnalogInput)
     private var currentRuntimeRendererConfiguration: RuntimeRendererConfiguration? = null
     private var lastOpenGlRetroArchFilterKey: String? = null
     private var prewarmedOpenGlRetroArchFilterKey: String? = null
@@ -336,6 +338,18 @@ class EmulatorActivity : AppCompatActivity() {
 
         override fun onQuickLoad() {
             viewModel.doQuickLoad()
+        }
+
+        override fun onCycleLayout() {
+            viewModel.cycleLayout()
+        }
+
+        override fun onExitGame() {
+            viewModel.exitEmulator()
+        }
+
+        override fun onScreenshot() {
+            viewModel.takeScreenshot()
         }
 
         override fun onRewind() {
@@ -478,6 +492,7 @@ class EmulatorActivity : AppCompatActivity() {
     private fun popConsoleOverlay() {
         if (consoleOverlayStack.isNotEmpty()) {
             consoleOverlayStack.removeAt(consoleOverlayStack.lastIndex)
+            activeOverlays.removeActiveOverlay(EmulatorOverlay.PAUSE_MENU)
         }
         if (consoleOverlayStack.isEmpty() && pauseMenuState.value == null) {
             reopenPauseMenu()
@@ -573,6 +588,7 @@ class EmulatorActivity : AppCompatActivity() {
         binding.viewLayoutControls.apply {
             setFrontendInputHandler(frontendInputHandler)
             setSystemInputHandler(melonTouchHandler)
+            setSlot2AnalogInput(slot2AnalogInput)
         }
 
         val layoutChangeListener = View.OnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
@@ -733,6 +749,7 @@ class EmulatorActivity : AppCompatActivity() {
                             gameTitle = currentRom?.let { it.config.customName ?: it.name },
                             onSlotPicked = { slot ->
                                 dismissSaveStatesOverlay()
+                                dismissPauseMenu()
                                 saveStatesData.onSlotPicked(slot)
                             },
                             onSlotDeleted = { slot ->
@@ -827,6 +844,14 @@ class EmulatorActivity : AppCompatActivity() {
         }
         lifecycleScope.launch {
             lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                connectedControllerManager.managedControllers.collect {
+                    slot2AnalogInput.clearPhysical()
+                    if (::nativeInputListener.isInitialized) nativeInputListener.releaseChordInputs()
+                }
+            }
+        }
+        lifecycleScope.launch {
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 connectedControllerManager.controllersState.collect {
                     binding.viewLayoutControls.setConnectedControllersState(it)
                     presentation?.layoutView?.setConnectedControllersState(it)
@@ -908,6 +933,8 @@ class EmulatorActivity : AppCompatActivity() {
                         ToastEvent.GbaLoadFailed -> getString(R.string.error_load_gba_rom) to Toast.LENGTH_SHORT
                         ToastEvent.QuickSaveSuccessful -> getString(R.string.saved) to Toast.LENGTH_SHORT
                         ToastEvent.QuickLoadSuccessful -> getString(R.string.loaded) to Toast.LENGTH_SHORT
+                        is ToastEvent.ScreenshotSaved -> getString(R.string.screenshot_saved, it.fileName) to Toast.LENGTH_SHORT
+                        ToastEvent.ScreenshotFailed -> getString(R.string.screenshot_failed) to Toast.LENGTH_LONG
                         ToastEvent.RewindNotEnabled -> getString(R.string.rewind_not_enabled) to Toast.LENGTH_SHORT
                         ToastEvent.RewindNotAvailableWhileRAHardcoreModeEnabled -> getString(R.string.rewind_unavailable_ra_hardcore_enabled) to Toast.LENGTH_LONG
                         ToastEvent.StateLoadFailed -> getString(R.string.failed_load_state) to Toast.LENGTH_SHORT
@@ -1126,6 +1153,7 @@ class EmulatorActivity : AppCompatActivity() {
         lifecycleScope.launch {
             lifecycle.repeatOnLifecycle(Lifecycle.State.CREATED) {
                 viewModel.emulatorState.collectLatest {
+                    if (!it.isRunning()) releaseVirtualButtonInputs()
                     when (it) {
                         is EmulatorState.Uninitialized -> {
                             binding.viewLayoutControls.isInvisible = true
@@ -1554,6 +1582,7 @@ class EmulatorActivity : AppCompatActivity() {
                     setLayoutComponentViewBuilderFactory(RuntimeLayoutComponentViewBuilderFactory())
                     setFrontendInputHandler(frontendInputHandler)
                     setSystemInputHandler(melonTouchHandler)
+                    setSlot2AnalogInput(slot2AnalogInput)
                     viewModel.runtimeLayout.value?.let {
                         updateLayout(it)
                     }
@@ -1643,6 +1672,7 @@ class EmulatorActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        viewModel.onHostResumed()
         choreographerFrameRenderer.startRendering()
         startShaderDiagnosticsPolling()
 
@@ -1657,6 +1687,7 @@ class EmulatorActivity : AppCompatActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus) releaseVirtualButtonInputs()
         setupFullscreen()
     }
 
@@ -1719,6 +1750,7 @@ class EmulatorActivity : AppCompatActivity() {
     }
 
     private fun setupSoftInput(layoutConfiguration: RuntimeInputLayoutConfiguration?) {
+        if (::nativeInputListener.isInitialized) nativeInputListener.releaseChordInputs()
         if (layoutConfiguration != null) {
             setLayoutOrientation(layoutConfiguration.layoutOrientation)
             with(binding.viewLayoutControls) {
@@ -2230,7 +2262,8 @@ class EmulatorActivity : AppCompatActivity() {
     }
 
     private fun setupInputHandling(controllerConfiguration: ControllerConfiguration) {
-        nativeInputListener = InputProcessor(controllerConfiguration, melonTouchHandler, frontendInputHandler)
+        releaseVirtualButtonInputs()
+        nativeInputListener = InputProcessor(controllerConfiguration, melonTouchHandler, frontendInputHandler, slot2AnalogInput)
     }
 
     private fun handleBackPressed() {
@@ -3870,6 +3903,7 @@ class EmulatorActivity : AppCompatActivity() {
     }
 
     private fun requestOverlayHostFocus(attempt: Int = 0) {
+        if (attempt == 0) releaseVirtualButtonInputs()
         val view = binding.layoutPauseMenu
         view.isFocusable = false
         view.isFocusableInTouchMode = false
@@ -3961,6 +3995,9 @@ class EmulatorActivity : AppCompatActivity() {
     private fun onRewindStateSelected(state: me.magnum.melonds.ui.emulator.rewind.model.RewindSaveState) {
         activeOverlays.removeActiveOverlay(EmulatorOverlay.REWIND_WINDOW)
         rewindOverlayState.value = null
+        if (rewindOpenedFromPauseMenu) {
+            activeOverlays.removeActiveOverlay(EmulatorOverlay.PAUSE_MENU)
+        }
         rewindOpenedFromPauseMenu = false
         viewModel.rewindToState(state)
         viewModel.resumeEmulator()
@@ -3988,6 +4025,7 @@ class EmulatorActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
+        releaseVirtualButtonInputs()
         cancelStartupPresentationRefreshes()
         stopShaderDiagnosticsPolling()
         frontendInputHandler.clearFastForwardHold()
@@ -3996,6 +4034,14 @@ class EmulatorActivity : AppCompatActivity() {
         if (!isClosingEmulator && !isFinishing) {
             viewModel.pauseEmulator(false)
         }
+    }
+
+    private fun releaseVirtualButtonInputs() {
+        if (!::binding.isInitialized) return
+        if (::nativeInputListener.isInitialized) nativeInputListener.releaseChordInputs()
+        binding.viewLayoutControls.releaseVirtualButtonInputs()
+        presentation?.layoutView?.releaseVirtualButtonInputs()
+        slot2AnalogInput.clear()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {

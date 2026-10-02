@@ -5,6 +5,7 @@ import android.view.MotionEvent
 import android.view.MotionEvent.PointerCoords
 import android.view.View
 import android.graphics.RectF
+import me.magnum.melonds.MelonEmulator
 import me.magnum.melonds.MelonEmulator.onScreenRelease
 import me.magnum.melonds.domain.model.Input
 import me.magnum.melonds.domain.model.Point
@@ -20,6 +21,9 @@ class TouchscreenInputHandler(
     override fun onTouch(v: View, event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                if (MelonEmulator.isLowLatencyEnabled) {
+                    v.requestUnbufferedDispatch(event)
+                }
                 touchActive = true
                 inputListener.onKeyPress(Input.TOUCHSCREEN)
                 inputListener.onTouch(normalizeTouchCoordinates(event, v.width, v.height))

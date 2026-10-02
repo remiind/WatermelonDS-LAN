@@ -10,7 +10,7 @@ namespace MelonDSAndroid
 bool areRendererDebugToolsEnabled();
 }
 
-FrameQueue::FrameQueue()
+FrameQueue::FrameQueue(bool lowLatencyEnabled) : lowLatencyEnabled(lowLatencyEnabled)
 {
     for (auto& frame : frames)
     {
@@ -326,6 +326,12 @@ void FrameQueue::commitPresentedFrame(Frame* frame, const FrameQueuePolicy& requ
     }
 
     previousFrame = frame;
+    if (lowLatencyEnabled)
+    {
+        committedPresentationFrameId = frame->frameId;
+        committedPresentationGeneration = frame->publicationGeneration;
+        freeFrameReadyCondition.notify_all();
+    }
     pendingPresentFrame = nullptr;
     suppressPreviousFrameReuse = false;
     const u64 nowNs = MelonDSAndroid::PerfNowNs();
@@ -680,6 +686,22 @@ FrameQueuePresentationWaitResult FrameQueue::waitForPresentProduct(
     return FrameQueuePresentationWaitResult::TimedOut;
 }
 
+bool FrameQueue::waitForPresentationCommit(u64 frameId, u64 generation, u64 waitEpoch, u64 timeoutNs)
+{
+    std::unique_lock lock(frameLock);
+    const auto canceled = [&] {
+        return publicationsSuspended || publicationGeneration != generation
+            || presentationWaitEpoch.load(std::memory_order_acquire) != waitEpoch;
+    };
+    const auto committed = [&] {
+        return committedPresentationFrameId == frameId
+            && committedPresentationGeneration == generation;
+    };
+    (void)freeFrameReadyCondition.wait_for(lock, std::chrono::nanoseconds(timeoutNs),
+        [&] { return canceled() || committed(); });
+    return !canceled() && committed();
+}
+
 void FrameQueue::cancelPresentationWaits() noexcept
 {
     advancePresentationWaitEpoch();
@@ -774,6 +796,8 @@ void FrameQueue::advancePresentationWaitEpoch() noexcept
 {
     presentationWaitEpoch.fetch_add(1, std::memory_order_acq_rel);
     presentFrameReadyCondition.notify_all();
+    if (lowLatencyEnabled)
+        freeFrameReadyCondition.notify_all();
 }
 
 bool FrameQueue::recycleCanceledPublicationLocked(Frame* frame)

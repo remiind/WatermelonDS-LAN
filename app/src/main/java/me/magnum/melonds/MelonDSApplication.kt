@@ -46,10 +46,13 @@ class MelonDSApplication : Application(), Configuration.Provider {
 
     override fun attachBaseContext(base: Context) {
         super.attachBaseContext(base)
+        if (me.magnum.melonds.ui.settings.RestartAppActivity.isRestartProcess(base)) return
+        me.magnum.melonds.impl.FreedrenoSettings.applyAtStartup(base)
         NativeCoreLoader.load()
     }
 
     override fun onCreate() {
+        if (me.magnum.melonds.ui.settings.RestartAppActivity.isRestartProcess(this)) return
         super.onCreate()
         giveLibrashaderACacheDirectory()
         createNotificationChannels()

@@ -3,6 +3,7 @@ package me.magnum.melonds.ui.emulator.input
 import android.annotation.SuppressLint
 import android.view.MotionEvent
 import android.view.View
+import me.magnum.melonds.MelonEmulator
 import me.magnum.melonds.MelonEmulator.onScreenRelease
 import me.magnum.melonds.domain.model.Input
 import me.magnum.melonds.domain.model.Point
@@ -21,6 +22,9 @@ class HybridScreenTouchscreenInputHandler(inputListener: IInputListener) : BaseI
             MotionEvent.ACTION_DOWN -> {
                 if (!isInBottomScreen) {
                     return true
+                }
+                if (MelonEmulator.isLowLatencyEnabled) {
+                    v.requestUnbufferedDispatch(event)
                 }
                 touchActive = true
                 inputListener.onKeyPress(Input.TOUCHSCREEN)

@@ -1,6 +1,7 @@
 package me.magnum.melonds.impl.emulator
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.os.SystemClock
 import android.net.Uri
 import android.util.Log
@@ -669,8 +670,10 @@ class AndroidEmulatorManager(
         MelonEmulator.loadState(saveStateFileUri)
     }
 
-    override suspend fun takeScreenshot(): Boolean = withContext(Dispatchers.IO) {
-        MelonEmulator.takeScreenshot()
+    override suspend fun takeScreenshot(): Bitmap? = withContext(Dispatchers.IO) {
+        MelonEmulator.takeScreenshot()?.let { pixels ->
+            Bitmap.createBitmap(pixels, 256, 384, Bitmap.Config.ARGB_8888)
+        }
     }
 
     override fun stopEmulator() {
@@ -746,6 +749,7 @@ class AndroidEmulatorManager(
             useCustomBios = mustUseCustomBios,
             showBootScreen = if (rom.isInstalledDsiWareShortcut) true else baseConfiguration.showBootScreen && mustUseCustomBios,
             frameLimitSpeedMultiplier = if (emulatorSession.isRetroAchievementsHardcoreModeEnabled) 1.0f else baseConfiguration.frameLimitSpeedMultiplier,
+            rtcOffsetMinutes = if (emulatorSession.isRetroAchievementsHardcoreModeEnabled) 0 else baseConfiguration.rtcOffsetMinutes,
             hgEngineFixEnabled = rom.config.useHgEngineFix,
             consoleType = consoleType,
             micSource = getRomOptionOrDefault(rom.config.runtimeMicSource, baseConfiguration.micSource),

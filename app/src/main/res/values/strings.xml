@@ -319,8 +319,8 @@
     <string name="jit_not_supported">JIT is only supported in 64 bit devices.</string>
     <string name="save_internal_config_as_file">Save internal config as a file</string>
     <string name="save_internal_config_as_file_summary">Keeps melonDualDS.opts synchronized in the save-file directory, or in a ROM directory when no save-file directory is configured.</string>
-    <string name="system_app_log_file_enabled">Write app log to ROM folder</string>
-    <string name="system_app_log_file_enabled_summary">Creates melonDualLog.log in the first ROM folder and records app, native, and core logcat lines for debugging. Enable only while reproducing an issue.</string>
+    <string name="system_app_log_file_enabled">WatermelonDS Log</string>
+    <string name="system_app_log_file_enabled_summary">Creates WatermelonDS.txt in the first ROM folder and records app, native, and core logcat lines for debugging. Enable only while reproducing an issue.</string>
     <string name="system_dldi_sd_card_enabled">Enable DLDI / Homebrew SD</string>
     <string name="system_dldi_sd_card_enabled_summary">Mounts a virtual SD card for DLDI homebrew. Needed by apps like ZXDS.</string>
     <string name="system_dldi_sd_card_dir">DLDI SD folder</string>
@@ -1129,4 +1129,51 @@
     <string name="rom_icon_source">Game icon</string>
     <string name="rom_icon_source_native">Native DS/DSi icon</string>
     <string name="rom_icon_source_retro_achievements">RetroAchievements icon</string>
+    <string name="video_low_latency">Low latency</string>
+    <string name="video_low_latency_summary">Prioritizes control response. May reduce performance and smoothness. Applies when starting a game.</string>
+    <string name="offline_ra_discard_expired_title">Discard expired offline unlocks?</string>
+    <string name="offline_ra_discard_expired_message">Only expired entries for this game and account will be removed from the pending queue. Recent offline unlocks and achievements already awarded online will be kept. Expired unlocks that were never awarded must be earned again.</string>
+    <string name="offline_ra_discard_expired_button">Discard expired entries</string>
+    <string name="offline_ra_discard_failed">Could not discard all expired entries. Check the remaining queue and try again.</string>
+    <string name="sync_rtc_on_resume">Sync clock when returning to the game</string>
+    <string name="sync_rtc_on_resume_summary">Update the emulated clock after returning from sleep or another app, keeping any custom clock offset.</string>
+    <string name="emulated_clock">Emulated clock</string>
+    <string name="emulated_clock_device">Uses the device time. Choose a different time for in-game day and night.</string>
+    <string name="emulated_clock_offset">Device time %1$s. The clock keeps running.</string>
+    <string name="emulated_clock_reset">Use device time</string>
+    <string name="emulated_clock_hardcore">Hardcore mode uses the device time.</string>
+    <string name="input_cycle_layout">Cycle layout</string>
+    <string name="input_exit_game">Exit game</string>
+    <string name="cycle_layouts">Layouts for cycling</string>
+    <string name="cycle_layouts_summary">Choose the layouts used by the Cycle layout shortcut, in library order. No selection disables cycling.</string>
+    <string name="button_mode">Button mode</string>
+    <string name="button_mode_value">Mode: %1$s</string>
+    <string name="button_mode_normal">Normal (hold)</string>
+    <string name="button_mode_toggle">Toggle (tap to hold or release)</string>
+    <string name="button_mode_turbo">Turbo (hold for 10 presses/s)</string>
+    <string name="input_combo">Combo</string>
+    <string name="waiting_for_combo">Hold two different buttons on the same controller. The first button can act before the combo is complete; use an unassigned button as the modifier to avoid this.</string>
+    <string name="input_combo_conflict">This combination is already assigned to %1$s. Clear that assignment first, or choose a different pair.</string>
+    <string name="input_slot2_analog">Slot-2 analog stick</string>
+    <string name="wfc_settings_title">Nintendo WFC settings</string>
+    <string name="wfc_settings_summary">With built-in firmware, store wfcsettings.bin in a folder you can sync with a PC. An existing file is kept; an empty folder receives your current profile. Set the same MAC address on both emulators and sync only while both are closed. Changes apply the next time you launch a game.</string>
+    <string name="wfc_settings_directory">WFC settings folder</string>
+    <string name="wfc_settings_use_internal">Use app storage for WFC</string>
+    <string name="wfc_settings_reset_summary">Return to the previous internal profile. Files in the selected folder are kept.</string>
+    <string name="wfc_settings_error">The folder must be writable and wfcsettings.bin must be empty or exactly 2304 bytes. Check access and the file before trying again.</string>
+    <string name="input_screenshot">Take screenshot</string>
+    <string name="screenshot_directory">Screenshot folder</string>
+    <string name="screenshot_directory_default">App storage / screenshots</string>
+    <string name="screenshot_saved">Screenshot saved: %1$s</string>
+    <string name="screenshot_failed">Could not save screenshot. Check the folder access and try again while the game is running.</string>
+    <string name="freedreno_settings">Freedreno settings</string>
+    <string name="freedreno_summary">Advanced Turnip/Freedreno options. Leave empty for driver defaults. Changes require an app restart. Unsupported options may be ignored by your driver.</string>
+    <string name="freedreno_default">Driver default</string>
+    <string name="freedreno_invalid">Use at most 2048 ASCII characters without line breaks.</string>
+    <string name="freedreno_restart">Restart WatermelonDS to save and apply this change.</string>
+    <string name="freedreno_name_fd_dev_features" translatable="false">FD_DEV_FEATURES</string>
+    <string name="freedreno_name_tu_debug" translatable="false">TU_DEBUG</string>
+    <string name="freedreno_name_fd_mesa_debug" translatable="false">FD_MESA_DEBUG</string>
+    <string name="freedreno_restart_button">Restart</string>
+    <string name="freedreno_save_failed">Could not save the setting. Tap Restart to try again.</string>
 </resources>

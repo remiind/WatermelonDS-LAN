@@ -32,6 +32,7 @@ class InputConfigParcelable : Parcelable {
         private const val ASSIGNMENT_NONE = 0
         private const val ASSIGNMENT_KEY = 1
         private const val ASSIGNMENT_AXIS = 2
+        private const val ASSIGNMENT_CHORD = 3
 
         override fun createFromParcel(parcel: Parcel): InputConfigParcelable {
             return InputConfigParcelable(parcel)
@@ -42,12 +43,13 @@ class InputConfigParcelable : Parcelable {
         }
 
         private fun readAssignment(parcel: Parcel): InputConfig.Assignment {
-            return when (parcel.readInt()) {
-                ASSIGNMENT_KEY -> {
+            return when (val type = parcel.readInt()) {
+                ASSIGNMENT_KEY, ASSIGNMENT_CHORD -> {
                     val hasDeviceId = parcel.readInt() != 0
                     val deviceId = if (hasDeviceId) parcel.readInt() else null
                     val keyCode = parcel.readInt()
-                    InputConfig.Assignment.Key(deviceId, keyCode)
+                    val modifierKeyCode = if (type == ASSIGNMENT_CHORD) parcel.readInt() else null
+                    InputConfig.Assignment.Key(deviceId, keyCode, modifierKeyCode)
                 }
 
                 ASSIGNMENT_AXIS -> {
@@ -66,10 +68,11 @@ class InputConfigParcelable : Parcelable {
             when (assignment) {
                 InputConfig.Assignment.None -> parcel.writeInt(ASSIGNMENT_NONE)
                 is InputConfig.Assignment.Key -> {
-                    parcel.writeInt(ASSIGNMENT_KEY)
+                    parcel.writeInt(if (assignment.modifierKeyCode == null) ASSIGNMENT_KEY else ASSIGNMENT_CHORD)
                     parcel.writeInt(if (assignment.deviceId != null) 1 else 0)
                     assignment.deviceId?.let(parcel::writeInt)
                     parcel.writeInt(assignment.keyCode)
+                    assignment.modifierKeyCode?.let(parcel::writeInt)
                 }
 
                 is InputConfig.Assignment.Axis -> {

@@ -42,6 +42,7 @@ class VulkanFrameRenderCoordinator(
         val controlEpoch: Long,
         var vsyncSequence: Long,
         var frameDeadlineNanos: Long,
+        val waitForProduct: Boolean = false,
         var nativeWaitEpoch: Long? = null,
         var consumed: Boolean = false,
     )
@@ -483,13 +484,15 @@ class VulkanFrameRenderCoordinator(
             }
         }
 
-        fun requestFrameRender(frameDeadlineNanos: Long?) {
+        fun requestFrameRender(frameDeadlineNanos: Long?, expectedControlEpoch: Long? = null) {
             if (!running) {
                 return
             }
             val currentHandler = getActiveHandler() ?: return
             val shouldQueueMessage = synchronized(pacingLock) {
-                if (!running || pacingTransitionCount != 0) {
+                if (!running || pacingTransitionCount != 0
+                    || (expectedControlEpoch != null && expectedControlEpoch != controlEpoch)
+                ) {
                     false
                 } else {
                     val vsyncSequence = nextVsyncSequence++
@@ -503,6 +506,7 @@ class VulkanFrameRenderCoordinator(
                             controlEpoch = controlEpoch,
                             vsyncSequence = vsyncSequence,
                             frameDeadlineNanos = frameDeadlineNanos ?: 0L,
+                            waitForProduct = expectedControlEpoch != null,
                         )
                     } else {
                         currentPermit.vsyncSequence = vsyncSequence
@@ -630,6 +634,16 @@ class VulkanFrameRenderCoordinator(
                 return
             }
 
+            if (initialPermit.waitForProduct) {
+                val permit = currentPacingPermit(initialPermit.permitId, initialPermit.controlEpoch) ?: return
+                val waitEpoch = permit.nativeWaitEpoch ?: return
+                if (MelonEmulator.waitForVulkanPresentationProduct(waitEpoch, PRODUCT_WAIT_TIMEOUT_NS)
+                    != MelonEmulator.VulkanPresentationWaitResult.PRODUCT_READY
+                ) {
+                    return
+                }
+            }
+
             var alreadyRetriedAfterProductWake = false
             while (running) {
                 val permit = currentPacingPermit(
@@ -667,6 +681,12 @@ class VulkanFrameRenderCoordinator(
                     MelonEmulator.VulkanPresentationResult.NO_SURFACE,
                     -> {
                         finishPacingPermit(permit.permitId, permit.controlEpoch, consumed = true)
+                        if (MelonEmulator.isLowLatencyEnabled
+                            && presentationResult == MelonEmulator.VulkanPresentationResult.PRESENTED
+                            && !MelonEmulator.isFastForwardEnabled()
+                        ) {
+                            requestFrameRender(null, permit.controlEpoch)
+                        }
                         return
                     }
 

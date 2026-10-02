@@ -9,6 +9,7 @@ import android.view.View
 import me.magnum.melonds.domain.model.*
 import me.magnum.melonds.domain.model.layout.LayoutComponent
 import me.magnum.melonds.domain.model.layout.PositionedLayoutComponent
+import me.magnum.melonds.domain.model.layout.VirtualButtonMode
 import me.magnum.melonds.domain.model.layout.UILayout
 import me.magnum.melonds.ui.common.LayoutComponentView
 import me.magnum.melonds.ui.common.LayoutView
@@ -117,7 +118,7 @@ class LayoutEditorView(context: Context, attrs: AttributeSet?) : LayoutView(cont
 
     fun buildCurrentLayout(): List<PositionedLayoutComponent> {
         return views.values.map {
-            PositionedLayoutComponent(it.getRect(), it.component, it.baseAlpha, it.onTop)
+            PositionedLayoutComponent(it.getRect(), it.component, it.baseAlpha, it.onTop, it.buttonMode)
         }
     }
 
@@ -329,6 +330,14 @@ class LayoutEditorView(context: Context, attrs: AttributeSet?) : LayoutView(cont
             modifiedByUser = true
             notifyLayoutChanged()
         }
+    }
+
+    fun setComponentButtonMode(component: LayoutComponent, mode: VirtualButtonMode) {
+        if (!component.supportsButtonMode()) return
+        val view = views[component] ?: return
+        view.buttonMode = mode
+        modifiedByUser = true
+        notifyLayoutChanged()
     }
 
     fun setSelectedScreenOnTop(onTop: Boolean) {

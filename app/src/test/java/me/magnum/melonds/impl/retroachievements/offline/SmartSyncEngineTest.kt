@@ -10,6 +10,8 @@ import me.magnum.rcheevosapi.model.RAAwardAchievementResponse
 import me.magnum.rcheevosapi.model.RAGame
 import me.magnum.rcheevosapi.model.RAGameId
 import me.magnum.rcheevosapi.model.RASetId
+import me.magnum.melonds.ui.romdetails.model.OfflineAchievementsUiState
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -289,6 +291,131 @@ class SmartSyncEngineTest {
         assertTrue(raClient.requestLog.isEmpty())
     }
 
+    @Test
+    fun expiredLedgerBlocksSyncWithoutSendingRequests() = runTest {
+        val clock = MutableClock(1_000L + LEDGER_EXPIRATION_WINDOW_MS)
+        val ledger = OfflineLedgerRepository(InMemoryOfflineLedgerStorage(), PassthroughOfflineLedgerSigner, clock)
+        appendUnlock(ledger, 1, 1_000L)
+        val client = RecordingSmartSyncRaClient(42, 1)
+        val result = SmartSyncEngine(
+            raClient = client,
+            ledgerRepository = ledger,
+            prefetchCacheRepository = OfflinePrefetchCacheRepository(InMemoryOfflinePrefetchCacheStorage()),
+            logSink = { _, _ -> },
+        ).syncSoftcoreNow("player", "game")
+        assertTrue(result.exceptionOrNull() is OfflineLedgerExpiredException)
+        assertTrue(client.requestLog.isEmpty())
+        assertEquals(1, ledger.getStatus("player", "game").pendingUnlockCount)
+    }
+
+    @Test
+    fun discardExpiredKeepsRecentUnlocksSignedHistoryAndOtherLedgers() = runTest {
+        val storage = InMemoryOfflineLedgerStorage()
+        val clock = MutableClock(1_000L + LEDGER_EXPIRATION_WINDOW_MS)
+        val ledger = OfflineLedgerRepository(storage, PassthroughOfflineLedgerSigner, clock)
+        appendUnlock(ledger, 1, 999L)
+        appendUnlock(ledger, 2, 1_000L)
+        appendUnlock(ledger, 3, 1_001L)
+        appendUnlock(ledger, 4, 999L, user = "other")
+        appendUnlock(ledger, 5, 999L, game = "other")
+        val original = OfflineLedgerCodec.decodeFile(storage.read("player", "game")!!)
+        val otherUser = storage.read("other", "game")!!.copyOf()
+        val otherGame = storage.read("player", "other")!!.copyOf()
+
+        assertEquals(2, ledger.discardExpiredUnlocks("player", "game").getOrThrow())
+        val status = ledger.getStatus("player", "game")
+        assertEquals(OfflineLedgerIntegrity.OK, status.integrity)
+        assertEquals(listOf(3L), status.pendingUnlocks.map { it.achievementId })
+        assertFalse(status.isExpired)
+        val records = OfflineLedgerCodec.decodeFile(storage.read("player", "game")!!).records
+        assertEquals(5, records.size)
+        original.records.forEachIndexed { i, record ->
+            assertArrayEquals(OfflineLedgerCodec.encodePayload(record.payload), OfflineLedgerCodec.encodePayload(records[i].payload))
+            assertArrayEquals(record.signature, records[i].signature)
+        }
+        assertArrayEquals(otherUser, storage.read("other", "game"))
+        assertArrayEquals(otherGame, storage.read("player", "other"))
+        val after = storage.read("player", "game")!!.copyOf()
+        assertEquals(0, ledger.discardExpiredUnlocks("player", "game").getOrThrow())
+        assertArrayEquals(after, storage.read("player", "game"))
+    }
+
+    @Test
+    fun discardAllExpiredRemovesExpirationAndPermitsNewPendingUnlocks() = runTest {
+        val clock = MutableClock(1_000L + LEDGER_EXPIRATION_WINDOW_MS)
+        val ledger = OfflineLedgerRepository(InMemoryOfflineLedgerStorage(), PassthroughOfflineLedgerSigner, clock)
+        appendUnlock(ledger, 1, 1_000L)
+        assertEquals(1, ledger.discardExpiredUnlocks("player", "game").getOrThrow())
+        val empty = ledger.getStatus("player", "game")
+        assertEquals(OfflineLedgerIntegrity.OK, empty.integrity)
+        assertEquals(0, empty.pendingUnlockCount)
+        assertEquals(null, empty.ledgerExpiresAtEpochMs)
+        appendUnlock(ledger, 2, clock.epochMs)
+        assertFalse(ledger.getStatus("player", "game").isExpired)
+        assertEquals(listOf(2L), ledger.getStatus("player", "game").pendingUnlocks.map { it.achievementId })
+    }
+
+    @Test
+    fun discardRespectsLegacyPolicyAndDisabledWrites() = runTest {
+        val storage = InMemoryOfflineLedgerStorage()
+        var enabled = true
+        val clock = MutableClock(1_000L + LEDGER_EXPIRATION_WINDOW_MS)
+        val ledger = OfflineLedgerRepository(storage, PassthroughOfflineLedgerSigner, clock, { enabled })
+        appendUnlock(ledger, 1, 1_000L)
+        val before = storage.read("player", "game")!!.copyOf()
+        enabled = false
+        assertTrue(ledger.discardExpiredUnlocks("player", "game").isFailure)
+        assertArrayEquals(before, storage.read("player", "game"))
+        enabled = true
+        val legacy = OfflineLedgerCodec.encodeFile(OfflineLedgerCodec.decodeFile(before).copy(expirationPolicyVersion = 0))
+        storage.write("player", "game", legacy)
+        assertEquals(0, ledger.discardExpiredUnlocks("player", "game").getOrThrow())
+        assertArrayEquals(legacy, storage.read("player", "game"))
+    }
+
+    @Test
+    fun discardFailurePreservesUnacknowledgedEntriesAndCanRetry() = runTest {
+        val storage = InMemoryOfflineLedgerStorage()
+        val ledger = OfflineLedgerRepository(storage, PassthroughOfflineLedgerSigner, MutableClock(1_000L + LEDGER_EXPIRATION_WINDOW_MS))
+        appendUnlock(ledger, 1, 1_000L)
+        appendUnlock(ledger, 2, 1_000L)
+        storage.writesUntilFailure = 1
+        assertTrue(ledger.discardExpiredUnlocks("player", "game").isFailure)
+        assertEquals(listOf(2L), ledger.getStatus("player", "game").pendingUnlocks.map { it.achievementId })
+        storage.writesUntilFailure = Int.MAX_VALUE
+        assertEquals(1, ledger.discardExpiredUnlocks("player", "game").getOrThrow())
+        assertEquals(0, ledger.getStatus("player", "game").pendingUnlockCount)
+    }
+
+    @Test
+    fun expiredRecoveryIsAvailableWithoutCacheOrNetworkButNotDuringSync() {
+        val state = OfflineAchievementsUiState(
+            availability = OfflineAchievementsUiState.Availability.DISABLED_NO_CACHE,
+            pendingSoftcoreUnlockCount = 1,
+            ledgerIntegrity = OfflineLedgerIntegrity.OK,
+            ledgerExpiresInMs = 0,
+            isOnline = false,
+        )
+        assertFalse(state.canSyncNow)
+        assertTrue(state.canDiscardExpired)
+        assertFalse(state.copy(isSyncing = true).canDiscardExpired)
+        assertFalse(state.copy(isDiscarding = true).canDiscardExpired)
+        assertFalse(state.copy(ledgerIntegrity = OfflineLedgerIntegrity.TAMPERED).canDiscardExpired)
+        assertFalse(state.copy(availability = OfflineAchievementsUiState.Availability.DISABLED_NOT_LOGGED_IN).canDiscardExpired)
+        assertFalse(state.copy(ledgerExpiresInMs = 1).canDiscardExpired)
+        assertTrue(state.copy(availability = OfflineAchievementsUiState.Availability.ENABLED, isOnline = true, ledgerExpiresInMs = 1).canSyncNow)
+    }
+
+    private suspend fun appendUnlock(
+        ledger: OfflineLedgerRepository,
+        id: Long,
+        at: Long,
+        user: String = "player",
+        game: String = "game",
+    ) {
+        ledger.appendAchievementUnlock(user, game, 42, id, false, "session", at, 0, id).getOrThrow()
+    }
+
     private class RecordingSmartSyncRaClient(
         private val gameId: Long,
         private val achievementId: Long,
@@ -419,10 +546,12 @@ class SmartSyncEngineTest {
     }
 
     private class InMemoryOfflineLedgerStorage : OfflineLedgerStorage {
+        var writesUntilFailure = Int.MAX_VALUE
         private val entries = mutableMapOf<Pair<String, String>, ByteArray>()
         override suspend fun exists(userId: String, contentId: String): Boolean = entries.containsKey(userId to contentId)
         override suspend fun read(userId: String, contentId: String): ByteArray? = entries[userId to contentId]
         override suspend fun write(userId: String, contentId: String, bytes: ByteArray) {
+            if (writesUntilFailure-- <= 0) throw IOException("fixture write failure")
             entries[userId to contentId] = bytes
         }
         override suspend fun delete(userId: String, contentId: String) {

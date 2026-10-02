@@ -418,6 +418,7 @@ const uint kAtlasOAM       = 0x114800u;
 const uint kAtlasBancos    = 0x115000u;
 
 const uint kAtlasLineas    = 0x195000u;
+const uint kAtlasLine3D    = 0x23D000u;
 
 const uint kAtlasCapStash  = 0x1F5000u;
 
@@ -1288,6 +1289,30 @@ uint causalBuildLiveLineDescriptor(uint physicalScreen, uint physicalLine,
 
 const uint kB1Blend2dOver3d = 1u << 22u;
 const uint kB1Needs3d = (1u << 18u) | kB1Blend2dOver3d;
+const uint kB1Precomposed3d = 1u << 23u;
+
+ivec3 composePrecomposed3d(uint operand, ivec3 color3d, uint alpha3d)
+{
+    ivec3 color2d = ivec3(int(operand & 0x3Fu),
+        int((operand >> 6u) & 0x3Fu), int((operand >> 12u) & 0x3Fu));
+    uint mode = (operand >> 28u) & 7u;
+    int eva = int((operand >> 18u) & 0x1Fu);
+    int evb = int((operand >> 23u) & 0x1Fu);
+    if (mode == 5u)
+    {
+        int alpha = int(alpha3d + 1u);
+        return min(ivec3(63),
+            (color3d * alpha + color2d * (32 - alpha) + 16) >> 5);
+    }
+    if (mode == 2u)
+        return min(ivec3(63), (color2d * eva + color3d * evb + 8) >> 4);
+    if (mode == 3u)
+        return color3d + (((ivec3(63) - color3d) * eva + 8) >> 4);
+    if (mode == 4u)
+        return color3d - ((color3d * eva + 7) >> 4);
+    return color3d;
+}
+
 
 ivec3 blend2dOver3d(uint foreground, ivec3 background)
 {
@@ -1424,7 +1449,9 @@ void storeFinalSubpixel(
         carrilSonda = (a5Resuelto != 0u) ? 2u : 3u;
         if (a5Resuelto != 0u)
         {
-            if ((w0 & kB1Blend2dOver3d) != 0u)
+            if ((w0 & kB1Precomposed3d) != 0u)
+                colorF = composePrecomposed3d(w1, c3Resuelto, a5Resuelto);
+            else if ((w0 & kB1Blend2dOver3d) != 0u)
                 colorF = blend2dOver3d(w1, c3Resuelto);
             else if ((w0 & (1u << 19u)) != 0u && (a5Resuelto + 1u) < 32u)
             {
@@ -1567,7 +1594,7 @@ void main()
         || (outputMode() == 2u && pc.mezcla != 0u))
     {
         gRegBase = 2u * 192u * 32u + 16u;
-        gAtlasBase = 0x23D000u;
+        gAtlasBase = 0x26D000u;
     }
     if (outputMode() == 1u && kSpecializedFinalInvocationMode == 1u)
     {
@@ -2092,7 +2119,9 @@ void main()
             carrilSonda = (a5Resuelto != 0u) ? 2u : 3u;
             if (a5Resuelto != 0u)
             {
-                if ((w0 & kB1Blend2dOver3d) != 0u)
+                if ((w0 & kB1Precomposed3d) != 0u)
+                    colorF = composePrecomposed3d(w1, c3Resuelto, a5Resuelto);
+                else if ((w0 & kB1Blend2dOver3d) != 0u)
                     colorF = blend2dOver3d(w1, c3Resuelto);
                 else if ((w0 & (1u << 19u)) != 0u
                     && (a5Resuelto + 1u) < 32u)
@@ -2147,6 +2176,7 @@ void main()
     uint fielB1Flags = 0u;
     ivec3 topCrudoB1 = ivec3(0);
     uint mezcla2dSobre3dB1 = 0u;
+    uint precomposed3dB1 = 0u;
 
     uint capPixB1 = 0u;
     uint bgCapturaB1 = 0xFFu;
@@ -2172,7 +2202,33 @@ void main()
             color = ivec3(int(vPre & 0x3Fu), int((vPre >> 8u) & 0x3Fu),
                           int((vPre >> 16u) & 0x3Fu));
 
-            if ((vPre & (1u << 27u)) != 0u
+            uint operand3d = eng == 0u
+                ? atlas[(gAtlasBase >> 2u) + (kAtlasLine3D >> 2u)
+                        + linea * 256u + x] : 0u;
+            uint precomposedMode = (operand3d >> 28u) & 7u;
+            if (precomposedMode >= 1u && precomposedMode <= 5u)
+            {
+                if (outputMode() == 3u)
+                {
+                    fielB1Flags |= (1u << 18u) | kB1Precomposed3d;
+                    precomposed3dB1 = operand3d;
+                }
+                else
+                {
+                    uint sourceY = reg(eng, linea, 26u);
+                    if (sourceY > 191u) sourceY = linea;
+                    uint pixel3d = d3d[sourceY * 256u + x];
+                    uint alpha3d = (pixel3d >> 27u) & 0x1Fu;
+                    if (alpha3d != 0u)
+                    {
+                        ivec3 color3d = ivec3(int((pixel3d & 0xFFu) >> 2u),
+                            int(((pixel3d >> 8u) & 0xFFu) >> 2u),
+                            int(((pixel3d >> 16u) & 0xFFu) >> 2u));
+                        color = composePrecomposed3d(operand3d, color3d, alpha3d);
+                    }
+                }
+            }
+            else if ((vPre & (1u << 27u)) != 0u
                 && regs[2u * 192u * 32u + 9u] != 0u)
             {
                 if (outputMode() == 3u)
@@ -2887,6 +2943,8 @@ void main()
                           | (uint(topCrudoB1.g & 0x3F) << 6u)
                           | (uint(topCrudoB1.b & 0x3F) << 12u)
                           | mezcla2dSobre3dB1;
+        if ((fielB1Flags & kB1Precomposed3d) != 0u)
+            fielB1[idxS + 1u] = precomposed3dB1;
         return;
     }
 

@@ -243,6 +243,36 @@ class OfflineLedgerRepository(
         return Result.success(ackedCount)
     }
 
+    suspend fun discardExpiredUnlocks(userId: String, contentId: String): Result<Int> {
+        val status = getStatus(userId, contentId)
+        if (status.integrity == OfflineLedgerIntegrity.EMPTY) return Result.success(0)
+        if (status.integrity != OfflineLedgerIntegrity.OK) {
+            return Result.failure(IllegalStateException("Offline ledger integrity is ${status.integrity}"))
+        }
+        if (!status.isExpired) return Result.success(0)
+
+        val cutoffEpochMs = clock.now().toEpochMilliseconds() - MAX_RA_AWARD_OFFSET_MS
+        val expiredUnlocks = status.pendingUnlocks.filter {
+            it.localTimestampEpochMs > 0L && it.localTimestampEpochMs <= cutoffEpochMs
+        }
+        for (unlock in expiredUnlocks) {
+            val result = appendAchievementAck(
+                userId = userId,
+                contentId = contentId,
+                gameId = unlock.gameId,
+                achievementId = unlock.achievementId,
+                isHardcore = unlock.isHardcore,
+                ackedSeq = unlock.seq,
+                unlockMode = unlock.unlockMode,
+                offlineType = unlock.offlineType,
+            )
+            if (result.isFailure) {
+                return Result.failure(result.exceptionOrNull()!!)
+            }
+        }
+        return Result.success(expiredUnlocks.size)
+    }
+
     suspend fun resetLedger(
         userId: String,
         contentId: String,

@@ -945,10 +945,12 @@ namespace MelonDSAndroid { extern void (*hookRegistrarHiloHints)(); }
 extern "C"
 {
 JNIEXPORT void JNICALL
-Java_me_magnum_melonds_MelonEmulator_setupEmulator(JNIEnv* env, jobject thiz, jobject emulatorConfiguration, jobject cameraManager, jobject screenshotBuffer)
+Java_me_magnum_melonds_MelonEmulator_setupEmulatorInternal(JNIEnv* env, jobject thiz, jobject emulatorConfiguration, jobject cameraManager, jobject screenshotBuffer)
 {
     std::lock_guard<std::mutex> lifecycleLock(emulatorLifecycleMutex);
     MelonDSAndroid::EmulatorConfiguration finalEmulatorConfiguration = MelonDSAndroidConfiguration::buildEmulatorConfiguration(env, emulatorConfiguration);
+    if (env->ExceptionCheck())
+        return;
     fastForwardSpeedMultiplier.store(
         finalEmulatorConfiguration.fastForwardSpeedMultiplier,
         std::memory_order_release);
@@ -1925,6 +1927,12 @@ Java_me_magnum_melonds_MelonEmulator_presentVulkanFrameNative(
             static_cast<u64>(expectedWaitEpoch)));
 }
 
+JNIEXPORT jboolean JNICALL
+Java_me_magnum_melonds_MelonEmulator_isFastForwardEnabled(JNIEnv*, jobject)
+{
+    return isFastForwardEnabled.load(std::memory_order_acquire) ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jlong JNICALL
 Java_me_magnum_melonds_MelonEmulator_captureVulkanPresentationWaitEpochNative(JNIEnv* env, jobject thiz)
 {
@@ -2517,6 +2525,12 @@ Java_me_magnum_melonds_MelonEmulator_resumeEmulation(JNIEnv* env, jobject thiz)
     pthread_mutex_unlock(&emuThreadMutex);
 }
 
+JNIEXPORT void JNICALL
+Java_me_magnum_melonds_MelonEmulator_requestRtcSync(JNIEnv* env, jobject thiz)
+{
+    MelonDSAndroid::requestRtcSync();
+}
+
 static jboolean requestExactDebugFrames(jint frames, bool allowReleaseDiagnostics)
 {
     if (frames < 1 || frames > 10000)
@@ -2898,10 +2912,37 @@ Java_me_magnum_melonds_MelonEmulator_onKeyRelease(JNIEnv* env, jobject thiz, jin
     MelonDSAndroid::releaseKey(key);
 }
 
-JNIEXPORT jboolean JNICALL
+JNIEXPORT jintArray JNICALL
 Java_me_magnum_melonds_MelonEmulator_takeScreenshot(JNIEnv* env, jobject thiz)
 {
-    return MelonDSAndroid::takeScreenshot();
+    std::lock_guard<std::mutex> lifecycleLock(emulatorLifecycleMutex);
+    if (!emulatorResourcesActive)
+        return nullptr;
+    pthread_mutex_lock(&emuThreadMutex);
+    const bool canCapture = started.load(std::memory_order_acquire)
+        && !stop.load(std::memory_order_acquire) && !paused;
+    pthread_mutex_unlock(&emuThreadMutex);
+    if (!canCapture || !MelonDSAndroid::takeScreenshot())
+        return nullptr;
+    std::vector<u32> pixels;
+    try
+    {
+        std::lock_guard<std::mutex> coreLock(emulationCoreAccessMutex);
+        pixels = MelonDSAndroid::getScreenshotPixels();
+    }
+    catch (const std::bad_alloc&)
+    {
+        return nullptr;
+    }
+    if (pixels.size() != 256u * 384u)
+        return nullptr;
+    jintArray result = env->NewIntArray(static_cast<jsize>(pixels.size()));
+    if (env->ExceptionCheck() || result == nullptr)
+        return nullptr;
+    env->SetIntArrayRegion(result, 0, static_cast<jsize>(pixels.size()), reinterpret_cast<const jint*>(pixels.data()));
+    if (env->ExceptionCheck())
+        return nullptr;
+    return result;
 }
 
 JNIEXPORT void JNICALL
@@ -2985,6 +3026,8 @@ JNIEXPORT void JNICALL
 Java_me_magnum_melonds_MelonEmulator_updateEmulatorConfiguration(JNIEnv* env, jobject thiz, jobject emulatorConfiguration)
 {
     MelonDSAndroid::EmulatorConfiguration newConfiguration = MelonDSAndroidConfiguration::buildEmulatorConfiguration(env, emulatorConfiguration);
+    if (env->ExceptionCheck())
+        return;
 
     fastForwardSpeedMultiplier.store(
         newConfiguration.fastForwardSpeedMultiplier,

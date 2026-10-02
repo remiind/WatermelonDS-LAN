@@ -10,6 +10,7 @@ data class OfflineAchievementsUiState(
     val ledgerExpiresInMs: Long? = null,
     val isOnline: Boolean = false,
     val isSyncing: Boolean = false,
+    val isDiscarding: Boolean = false,
 ) {
     enum class Availability {
         ENABLED,
@@ -23,11 +24,16 @@ data class OfflineAchievementsUiState(
     val isLedgerExpired: Boolean
         get() = ledgerExpiresInMs?.let { it <= 0L } == true
 
+    val canDiscardExpired: Boolean
+        get() = availability != Availability.DISABLED_NOT_LOGGED_IN &&
+            ledgerIntegrity == OfflineLedgerIntegrity.OK &&
+            isLedgerExpired && !isSyncing && !isDiscarding
+
     val canSyncNow: Boolean
         get() = availability == Availability.ENABLED &&
             isOnline &&
             isLedgerIntegrityOk &&
             pendingSoftcoreUnlockCount > 0 &&
             !isLedgerExpired &&
-            !isSyncing
+            !isSyncing && !isDiscarding
 }

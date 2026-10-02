@@ -467,8 +467,10 @@ struct VulkanOutputTemporalStats
 
 class VulkanOutput
 {
+    const bool lowLatencyEnabled;
+
 public:
-    VulkanOutput();
+    explicit VulkanOutput(bool lowLatencyEnabled = false);
     ~VulkanOutput();
 
     VulkanOutput(const VulkanOutput&) = delete;
@@ -529,6 +531,7 @@ public:
 
     bool prewarmFaithfulPipeline() { return ensureFaithfulPipeline(); }
     bool isFrameReady(const Frame* frame) const;
+    bool getFramePresentationDependency(const Frame* frame, VkSemaphore& semaphore, u64& value) const;
 
     enum class WaitSite : u8 { Other = 0, Presentation = 1 };
     bool waitForFrame(const Frame* frame, u64 timeoutNs,

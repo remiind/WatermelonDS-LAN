@@ -45,6 +45,13 @@
             android:resource="@xml/game_mode_config" />
 
         <activity
+            android:name=".ui.settings.RestartAppActivity"
+            android:process=":restart"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Material.NoActionBar" />
+
+        <activity
             android:name=".ui.romlist.RomListActivity"
             android:theme="@style/SplashTheme"
             android:launchMode="singleTop"

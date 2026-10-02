@@ -16,6 +16,9 @@ abstract class FrontendInputHandler : IInputListener {
             Input.QUICK_SAVE -> onQuickSave()
             Input.QUICK_LOAD -> onQuickLoad()
             Input.REWIND -> onRewind()
+            Input.CYCLE_LAYOUT -> onCycleLayout()
+            Input.EXIT_GAME -> onExitGame()
+            Input.SCREENSHOT -> onScreenshot()
             else -> {}
         }
     }
@@ -41,4 +44,7 @@ abstract class FrontendInputHandler : IInputListener {
     abstract fun onQuickSave()
     abstract fun onQuickLoad()
     abstract fun onRewind()
+    abstract fun onCycleLayout()
+    abstract fun onExitGame()
+    abstract fun onScreenshot()
 }

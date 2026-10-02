@@ -151,8 +151,10 @@ struct VulkanCompositionInputs;
 
 class VulkanSurfacePresenter
 {
+    const bool lowLatencyEnabled;
+
 public:
-    VulkanSurfacePresenter() = default;
+    explicit VulkanSurfacePresenter(bool lowLatencyEnabled = false) : lowLatencyEnabled(lowLatencyEnabled) {}
     ~VulkanSurfacePresenter();
 
     VulkanSurfacePresenter(const VulkanSurfacePresenter&) = delete;
@@ -174,6 +176,7 @@ public:
         u64 timeoutNs,
         const VulkanCausalWaitRunner& waitRunner);
     bool waitForFrameConsumption(Frame* frame, u64 timeoutNs = UINT64_MAX);
+    bool getFrameConsumptionDependency(const Frame* frame, VkSemaphore& semaphore, u64& value);
     void invalidateDescriptorCaches();
     VulkanPresenterPacingStats takePacingStatsSnapshotAndReset();
     static bool prewarmRetroArchFilter(
@@ -291,6 +294,7 @@ private:
         u64 surfaceEpoch = 0;
         u64 swapchainGeneration = 0;
         u64 lastSubmitSerial = 0;
+        u32 nextDisplayTimingId = 1;
         ANativeWindow* window = nullptr;
         u32 requestedWidth = 0;
         u32 requestedHeight = 0;
@@ -464,6 +468,8 @@ private:
     bool submitSurfaceCommands(
         SurfaceState& surfaceState,
         u32 imageIndex,
+        VkSemaphore sourceReadySemaphore,
+        u64 sourceReadyValue,
         u64& presentCpuNs,
         u64& presentTimelineValueOut,
         bool& queueSubmitSucceededOut,
@@ -510,9 +516,11 @@ private:
     VkQueue queue = VK_NULL_HANDLE;
     u32 queueFamilyIndex = 0;
     bool useTimelineSemaphores = false;
+    bool hasExternalTimelineConsumer = false;
     VkSemaphore timelineSemaphore = VK_NULL_HANDLE;
     u64 timelineValue = 0;
     PFN_vkWaitSemaphoresKHR waitSemaphores = nullptr;
+    PFN_vkGetPastPresentationTimingGOOGLE getPastPresentationTiming = nullptr;
 
     std::mutex presentConsumptionMutex;
     std::array<PresentFenceSlot, FRAME_QUEUE_SIZE> presentFenceSlots{};

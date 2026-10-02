@@ -18,6 +18,10 @@ class SingleButtonLayoutComponentViewBuilder(private val layoutComponent: Layout
 
     private fun getInputDrawable(): Int {
         return when (layoutComponent) {
+            LayoutComponent.BUTTON_A -> R.drawable.button_a
+            LayoutComponent.BUTTON_B -> R.drawable.button_b
+            LayoutComponent.BUTTON_X -> R.drawable.button_x
+            LayoutComponent.BUTTON_Y -> R.drawable.button_y
             LayoutComponent.BUTTON_L -> R.drawable.button_l
             LayoutComponent.BUTTON_R -> R.drawable.button_r
             LayoutComponent.BUTTON_START -> R.drawable.button_start

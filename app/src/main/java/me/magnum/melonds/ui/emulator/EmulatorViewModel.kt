@@ -125,6 +125,7 @@ import me.magnum.melonds.domain.repositories.SaveStatesRepository
 import me.magnum.melonds.domain.repositories.SettingsRepository
 import me.magnum.melonds.domain.services.EmulatorManager
 import me.magnum.melonds.impl.ShaderCompileTimeStore
+import me.magnum.melonds.impl.ScreenshotFileManager
 import me.magnum.melonds.impl.emulator.AndroidEmulatorManager
 import me.magnum.melonds.impl.emulator.EmulatorSession
 import me.magnum.melonds.impl.emulator.LeaderboardTrackerUpdateLogLimiter
@@ -225,7 +226,7 @@ private const val RA_SUBMISSION_TAG = "RASubmission"
 private const val AUTO_STATE_TAG = "AutoState"
 private const val SAVESTATE_HEADER_SIZE = 12
 private const val SAVESTATE_MAJOR = 13
-private const val SAVESTATE_MINOR = 0
+private const val SAVESTATE_MINOR = 1
 
 private const val RETROACHIEVEMENTS_REFRESH_TIMEOUT_MS = 12_000L
 private const val RA_PENDING_BARRIER_TIMEOUT_MS = 3_000L
@@ -252,6 +253,7 @@ class EmulatorViewModel @Inject constructor(
     private val backgroundsRepository: BackgroundRepository,
     private val saveStatesRepository: SaveStatesRepository,
     private val screenshotFrameBufferProvider: ScreenshotFrameBufferProvider,
+    private val screenshotFileManager: ScreenshotFileManager,
     private val uiLayoutProvider: UILayoutProvider,
     private val emulatorManager: EmulatorManager,
     private val emulatorSession: EmulatorSession,
@@ -261,6 +263,7 @@ class EmulatorViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val sessionCoroutineScope = EmulatorSessionCoroutineScope()
+    private var screenshotJob: Job? = null
 
     data class HeavyShaderCompileRequest(
         val presetName: String,
@@ -1636,8 +1639,29 @@ class EmulatorViewModel @Inject constructor(
         updateRunningRomConfig { it.copy(retroArchShaderParameters = parameters) }
     }
 
+    fun cycleLayout() {
+        if (!_emulatorState.value.isRunning()) return
+        sessionCoroutineScope.launch {
+            val includedIds = settingsRepository.getLayoutCycleIds()
+            val candidates = layoutsRepository.getLayouts().first().filter {
+                it.id != null && (includedIds == null || it.id in includedIds)
+            }
+            if (candidates.isEmpty()) return@launch
+            val currentId = (_emulatorState.value as? EmulatorState.RunningRom)?.rom?.config?.layoutId
+                ?: settingsRepository.getSelectedLayoutId()
+            val currentIndex = candidates.indexOfFirst { it.id == currentId }
+            val nextId = candidates[(currentIndex + 1) % candidates.size].id ?: return@launch
+            if (nextId == currentId) return@launch
+            if (_emulatorState.value is EmulatorState.RunningRom) {
+                onRunningRomLayoutSelected(nextId)
+            } else if (_emulatorState.value is EmulatorState.RunningFirmware) {
+                settingsRepository.setSelectedLayoutId(nextId)
+            }
+        }
+    }
+
     fun onRunningRomLayoutSelected(layoutId: UUID?) {
-        updateRunningRomConfig { it.copy(layoutId = layoutId) }
+        updateRunningRomConfig(updateNativeConfiguration = false) { it.copy(layoutId = layoutId) }
     }
 
     fun onRunningRomMicSourceSelected(micSource: RuntimeMicSource) {
@@ -1653,13 +1677,15 @@ class EmulatorViewModel @Inject constructor(
         }
     }
 
-    private fun updateRunningRomConfig(update: (me.magnum.melonds.domain.model.rom.config.RomConfig) -> me.magnum.melonds.domain.model.rom.config.RomConfig) {
+    private fun updateRunningRomConfig(updateNativeConfiguration: Boolean = true, update: (me.magnum.melonds.domain.model.rom.config.RomConfig) -> me.magnum.melonds.domain.model.rom.config.RomConfig) {
         val runningRom = (_emulatorState.value as? EmulatorState.RunningRom)?.rom ?: return
         val updatedRom = runningRom.copy(config = update(runningRom.config))
         romsRepository.updateRomConfig(runningRom, updatedRom.config)
         updateRunningRom(updatedRom)
-        sessionCoroutineScope.launch {
-            emulatorManager.updateRomEmulatorConfiguration(updatedRom)
+        if (updateNativeConfiguration) {
+            sessionCoroutineScope.launch {
+                emulatorManager.updateRomEmulatorConfiguration(updatedRom)
+            }
         }
     }
 
@@ -1714,6 +1740,15 @@ class EmulatorViewModel @Inject constructor(
                     )
                 }
             }
+        }
+    }
+
+    fun onHostResumed() {
+        if (_emulatorState.value.isRunning()
+            && settingsRepository.isRtcSyncOnResumeEnabled()
+            && !DebugCommandStateStore.isDebugPauseHeld()
+        ) {
+            MelonEmulator.requestRtcSync()
         }
     }
 
@@ -2303,6 +2338,35 @@ class EmulatorViewModel @Inject constructor(
             }
             else -> {
                 // Do nothing
+            }
+        }
+    }
+
+    fun takeScreenshot() {
+        val state = _emulatorState.value as? EmulatorState.RunningRom ?: return
+        if (screenshotJob?.isActive == true) {
+            return
+        }
+        screenshotJob = sessionCoroutineScope.launch {
+            try {
+                val fileName = withContext(Dispatchers.IO) {
+                    val screenshot = emulatorManager.takeScreenshot() ?: return@withContext null
+                    try {
+                        screenshotFileManager.save(state.rom, screenshot)
+                    } finally {
+                        screenshot.recycle()
+                    }
+                }
+                if (fileName == null) {
+                    _toastEvent.emit(ToastEvent.ScreenshotFailed)
+                    return@launch
+                }
+                _toastEvent.emit(ToastEvent.ScreenshotSaved(fileName))
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (exception: Exception) {
+                Log.w("Screenshot", "Capture failed", exception)
+                _toastEvent.emit(ToastEvent.ScreenshotFailed)
             }
         }
     }

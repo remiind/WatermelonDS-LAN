@@ -364,6 +364,9 @@ class SharedPreferencesSettingsRepository(
                 folderPath = File(context.filesDir, "dldi/sync").absolutePath,
             ),
             muteOnFastForward = isMuteOnFastForwardEnabled(),
+            lowLatencyEnabled = preferences.getBoolean("video_low_latency", false),
+            rtcOffsetMinutes = preferences.getInt("rtc_offset_minutes", 0).coerceIn(-1440, 1440),
+            wfcSettingsPath = preferences.getString("wfc_settings_file", null),
         )
     }
 
@@ -430,6 +433,10 @@ class SharedPreferencesSettingsRepository(
     override fun getFrameLimitSpeedMultiplier(): Float {
         val speedMultiplierPreference = preferences.getString("frame_limit_speed_multiplier", "1")!!
         return speedMultiplierPreference.toFloatOrNull()?.coerceIn(0.25f, 1.0f) ?: 1.0f
+    }
+
+    override fun isRtcSyncOnResumeEnabled(): Boolean {
+        return preferences.getBoolean("sync_rtc_on_resume", true)
     }
 
     override fun isRewindEnabled(): Boolean {
@@ -1508,6 +1515,10 @@ class SharedPreferencesSettingsRepository(
         return dirPreference?.toUri()
     }
 
+    override fun getScreenshotDirectory(): Uri? {
+        return preferences.getStringSet("screenshot_directory", null)?.firstOrNull()?.toUri()
+    }
+
     override fun getSaveFileDirectory(rom: Rom): Uri {
         return if (!saveNextToRomFile() && getSaveFileDirectory() != null) {
             getSaveFileDirectory()!!
@@ -1559,6 +1570,12 @@ class SharedPreferencesSettingsRepository(
 
     override fun observeControllerConfiguration(): StateFlow<ControllerConfiguration> {
         return controllerConfiguration
+    }
+
+    override fun getLayoutCycleIds(): Set<UUID>? {
+        return preferences.getStringSet("input_cycle_layout_ids", null)?.mapNotNull {
+            runCatching { UUID.fromString(it) }.getOrNull()
+        }?.toSet()
     }
 
     override fun getSelectedLayoutId(): UUID {

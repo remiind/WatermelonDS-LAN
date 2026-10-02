@@ -1601,6 +1601,13 @@ namespace MelonDSAndroid
         startAudio();
     }
 
+    void requestRtcSync()
+    {
+        auto currentInstance = GetInstanceSnapshot();
+        if (currentInstance)
+            currentInstance->requestRtcSync();
+    }
+
     void reset()
     {
         instance->reset();
@@ -1777,6 +1784,12 @@ namespace MelonDSAndroid
             return instance->takeScreenshot();
 
         return false;
+    }
+
+    std::vector<u32> getScreenshotPixels()
+    {
+        auto currentInstance = GetInstanceSnapshot();
+        return currentInstance ? currentInstance->getScreenshotPixels() : std::vector<u32>{};
     }
 
     void stop()

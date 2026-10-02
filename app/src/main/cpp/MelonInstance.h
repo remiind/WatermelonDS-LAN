@@ -52,6 +52,7 @@ public:
     bool precompileVulkanPipelines(const VulkanSurfaceConfig& retroArchConfig);
     void start();
     void reset();
+    void requestRtcSync();
 
     melonDS::u32 runFrame(bool frameskipSolicitado = false);
 
@@ -125,8 +126,10 @@ public:
     AudioOutputAdaptiveSnapshot getAudioOutputAdaptiveSnapshot() const noexcept;
     AudioOutputControllerSnapshot getAudioOutputControllerSnapshot() const noexcept;
     void setAudioOutputSpeedHint(double speed);
+    void configureAudioOutputTransport(std::uint32_t frames);
     void resetAudioOutputAdaptivo();
     bool takeScreenshot();
+    std::vector<u32> getScreenshotPixels();
     void loadCheats(std::list<Cheat> cheats);
     int sendNetPacket(u8* data, int length);
     int receiveNetPacket(u8* data);
@@ -387,6 +390,7 @@ private:
     void logVulkanPerformanceIfNeeded();
     void setBatteryLevels();
     void setDateTime();
+    std::atomic<bool> rtcSyncRequested{false};
     void saveRewindState(RewindSaveState* rewindSaveState);
     void clearLatchedSoftPackedFrameSnapshot();
 
@@ -420,6 +424,7 @@ private:
     std::atomic<float> slot2AnalogY = 0.0f;
 
     std::shared_ptr<EmulatorConfiguration> currentConfiguration;
+    const bool lowLatencyEnabled;
     FrameQueue frameQueue;
     std::unique_ptr<VulkanOutput> vulkanOutput;
     std::unique_ptr<VulkanSurfacePresenter> vulkanSurfacePresenter;

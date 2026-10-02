@@ -1,5 +1,6 @@
 package me.magnum.melonds.domain.services
 
+import android.graphics.Bitmap
 import android.net.Uri
 import kotlinx.coroutines.flow.Flow
 import me.magnum.melonds.domain.model.FrameskipConfiguration
@@ -62,7 +63,7 @@ interface EmulatorManager {
 
     suspend fun loadState(saveStateFileUri: Uri): Boolean
 
-    suspend fun takeScreenshot(): Boolean
+    suspend fun takeScreenshot(): Bitmap?
 
     fun stopEmulator()
 

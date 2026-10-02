@@ -5,14 +5,13 @@ import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
-import me.magnum.melonds.MelonEmulator
 import me.magnum.melonds.domain.model.ControllerConfiguration
 import me.magnum.melonds.domain.model.Input
 import me.magnum.melonds.domain.model.InputConfig
 import java.util.Locale
 import kotlin.math.absoluteValue
 
-class InputProcessor(private val controllerConfiguration: ControllerConfiguration, private val systemInputListener: IInputListener, private val frontendInputListener: IInputListener) : INativeInputListener {
+class InputProcessor(private val controllerConfiguration: ControllerConfiguration, private val systemInputListener: IInputListener, private val frontendInputListener: IInputListener, private val slot2AnalogInput: Slot2AnalogInput) : INativeInputListener {
     companion object {
         private const val TAG = "InputProcessor"
         private const val SLOT2_ANALOG_LOG_INTERVAL_MS = 1500L
@@ -36,6 +35,21 @@ class InputProcessor(private val controllerConfiguration: ControllerConfiguratio
     }
 
     private val axisStates: Map<Axis, AxisState>
+    private data class DeviceKey(val deviceId: Int, val keyCode: Int)
+    private data class KeyChord(val input: Input, val deviceId: Int?, val keys: Set<Int>)
+    private data class ActiveChord(val chord: KeyChord, val fromController: Boolean)
+    private data class PressedInput(val input: Input, val fromController: Boolean)
+    private val keyChords = controllerConfiguration.inputMapper.filter { !it.input.isSystemInput }.flatMap { config ->
+        listOf(config.assignment, config.altAssignment).mapNotNull { assignment ->
+            (assignment as? InputConfig.Assignment.Key)?.takeIf {
+                it.modifierKeyCode != null && it.modifierKeyCode != it.keyCode
+            }?.let { KeyChord(config.input, it.deviceId, it.keyCodes.toSet()) }
+        }
+    }
+    private val pressedChordKeys = mutableSetOf<DeviceKey>()
+    private val consumedChordKeys = mutableSetOf<DeviceKey>()
+    private val chordSingles = mutableMapOf<DeviceKey, PressedInput>()
+    private val activeChords = mutableMapOf<Int, ActiveChord>()
     private var lastSlot2AnalogLogAtMs = 0L
     private var lastSlot2RawAnalogEventAtMs = 0L
     private var slot2DigitalLeftPressed = false
@@ -56,13 +70,20 @@ class InputProcessor(private val controllerConfiguration: ControllerConfiguratio
     }
 
     override fun onKeyEvent(keyEvent: KeyEvent): Boolean {
-        val input = controllerConfiguration.keyToInput(keyEvent.keyCode) ?: return false
         val fromController = keyEvent.isFromSource(InputDevice.SOURCE_CLASS_JOYSTICK)
             || keyEvent.isFromSource(InputDevice.SOURCE_JOYSTICK)
             || keyEvent.isFromSource(InputDevice.SOURCE_GAMEPAD)
             || keyEvent.isFromSource(InputDevice.SOURCE_DPAD)
             || keyEvent.device?.supportsSource(InputDevice.SOURCE_JOYSTICK) == true
             || keyEvent.device?.supportsSource(InputDevice.SOURCE_GAMEPAD) == true
+
+        processChordKeyEvent(keyEvent, fromController)?.let { return it }
+        val input = controllerConfiguration.keyToInput(keyEvent.keyCode) ?: return false
+        if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount > 0
+            && (input == Input.CYCLE_LAYOUT || input == Input.EXIT_GAME)
+        ) {
+            return true
+        }
 
         when (keyEvent.action) {
             KeyEvent.ACTION_DOWN -> {
@@ -75,6 +96,60 @@ class InputProcessor(private val controllerConfiguration: ControllerConfiguratio
             }
         }
         return false
+    }
+
+    private fun processChordKeyEvent(event: KeyEvent, fromController: Boolean): Boolean? {
+        if (keyChords.isEmpty()) return null
+        val candidates = keyChords.filter { (it.deviceId == null || it.deviceId == event.deviceId) && event.keyCode in it.keys }
+        if (candidates.isEmpty()) return null
+        val key = DeviceKey(event.deviceId, event.keyCode)
+        when (event.action) {
+            KeyEvent.ACTION_DOWN -> {
+                if (event.repeatCount > 0 || !pressedChordKeys.add(key)) return true
+                if (activeChords.containsKey(event.deviceId)) {
+                    consumedChordKeys.add(key)
+                    return true
+                }
+                val chord = candidates.firstOrNull { it.keys.all { code -> DeviceKey(event.deviceId, code) in pressedChordKeys } }
+                if (chord != null) {
+                    for (code in chord.keys) {
+                        val member = DeviceKey(event.deviceId, code)
+                        consumedChordKeys.add(member)
+                        chordSingles.remove(member)?.let { dispatchInputReleased(it.input, it.fromController) }
+                    }
+                    activeChords[event.deviceId] = ActiveChord(chord, fromController)
+                    dispatchInputPressed(chord.input, fromController)
+                } else if (key !in consumedChordKeys) {
+                    controllerConfiguration.keyToInput(event.keyCode)?.let { input ->
+                        chordSingles[key] = PressedInput(input, fromController)
+                        dispatchInputPressed(input, fromController)
+                    }
+                }
+                return true
+            }
+            KeyEvent.ACTION_UP -> {
+                pressedChordKeys.remove(key)
+                consumedChordKeys.remove(key)
+                activeChords[event.deviceId]?.takeIf { event.keyCode in it.chord.keys }?.let {
+                    activeChords.remove(event.deviceId)
+                    dispatchInputReleased(it.chord.input, it.fromController)
+                }
+                chordSingles.remove(key)?.let { dispatchInputReleased(it.input, it.fromController) }
+                return true
+            }
+            else -> return null
+        }
+    }
+
+    override fun releaseChordInputs() {
+        val chords = activeChords.values.toList()
+        val singles = chordSingles.values.toList()
+        activeChords.clear()
+        chordSingles.clear()
+        consumedChordKeys.clear()
+        pressedChordKeys.clear()
+        chords.forEach { dispatchInputReleased(it.chord.input, it.fromController) }
+        singles.forEach { dispatchInputReleased(it.input, it.fromController) }
     }
 
     override fun onMotionEvent(motionEvent: MotionEvent): Boolean {
@@ -165,7 +240,7 @@ class InputProcessor(private val controllerConfiguration: ControllerConfiguratio
             else -> 1f
         }
 
-        MelonEmulator.setSlot2AnalogInput(digitalX, digitalY)
+        slot2AnalogInput.setPhysical(digitalX, digitalY)
         if ((digitalX.absoluteValue > 0f || digitalY.absoluteValue > 0f)
             && now - lastSlot2AnalogLogAtMs >= SLOT2_ANALOG_LOG_INTERVAL_MS
         ) {
@@ -206,7 +281,7 @@ class InputProcessor(private val controllerConfiguration: ControllerConfiguratio
         val mappedY = if (slot2Mapping.invertY) -rawAnalogY else rawAnalogY
         val analogX = if (mappedX.absoluteValue < deadzone) 0f else mappedX
         val analogY = if (mappedY.absoluteValue < deadzone) 0f else mappedY
-        MelonEmulator.setSlot2AnalogInput(analogX, analogY)
+        slot2AnalogInput.setPhysical(analogX, analogY)
         val now = SystemClock.uptimeMillis()
         lastSlot2RawAnalogEventAtMs = now
         if ((analogX.absoluteValue > 0f || analogY.absoluteValue > 0f)

@@ -2,6 +2,8 @@ package me.magnum.melonds.ui.romdetails.model
 
 sealed class RomDetailsToastEvent {
 
+    data object OfflineLedgerDiscardFailed : RomDetailsToastEvent()
+
     enum class OfflineAchievementNotSyncedReason {
         MISSING_FROM_CURRENT_SET,
         DEFINITION_CHANGED,

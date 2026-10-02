@@ -40,4 +40,7 @@ data class EmulatorConfiguration(
         val dsiWareAutoloadTitleId: Long = 0L,
 
         val muteOnFastForward: Boolean = false,
+        val lowLatencyEnabled: Boolean = false,
+        val rtcOffsetMinutes: Int = 0,
+        val wfcSettingsPath: String? = null,
 )

@@ -28,6 +28,9 @@ class ControllerConfiguration(
             Input.QUICK_SAVE,
             Input.QUICK_LOAD,
             Input.REWIND,
+            Input.CYCLE_LAYOUT,
+            Input.EXIT_GAME,
+            Input.SCREENSHOT,
         )
     }
 
@@ -52,7 +55,7 @@ class ControllerConfiguration(
     fun keyToInput(key: Int): Input? {
         for (config in inputMapper) {
             val assignments = listOf(config.assignment, config.altAssignment)
-            if (assignments.any { (it as? InputConfig.Assignment.Key)?.keyCode == key }) {
+            if (assignments.any { it is InputConfig.Assignment.Key && it.modifierKeyCode == null && it.keyCode == key }) {
                 return config.input
             }
         }

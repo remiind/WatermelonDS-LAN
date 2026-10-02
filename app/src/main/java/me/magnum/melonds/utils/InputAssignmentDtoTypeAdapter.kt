@@ -25,9 +25,10 @@ class InputAssignmentDtoTypeAdapter : JsonSerializer<InputConfigDto.AssignmentDt
                     add(TYPE_FIELD, JsonPrimitive(TYPE_NONE))
                 }
                 is InputConfigDto.AssignmentDto.Key -> {
-                    add(TYPE_FIELD, JsonPrimitive(TYPE_KEY))
+                    add(TYPE_FIELD, JsonPrimitive(if (src.modifierKeyCode == null) TYPE_KEY else TYPE_CHORD))
                     addNullableInt(DEVICE_ID_FIELD, src.deviceId)
                     add(KEY_CODE_FIELD, JsonPrimitive(src.keyCode))
+                    src.modifierKeyCode?.let { add(MODIFIER_KEY_CODE_FIELD, JsonPrimitive(it)) }
                 }
                 is InputConfigDto.AssignmentDto.Axis -> {
                     add(TYPE_FIELD, JsonPrimitive(TYPE_AXIS))
@@ -52,6 +53,11 @@ class InputAssignmentDtoTypeAdapter : JsonSerializer<InputConfigDto.AssignmentDt
             TYPE_KEY -> InputConfigDto.AssignmentDto.Key(
                 deviceId = obj.optionalInt(DEVICE_ID_FIELD),
                 keyCode = obj.requiredInt(KEY_CODE_FIELD),
+            )
+            TYPE_CHORD -> InputConfigDto.AssignmentDto.Key(
+                deviceId = obj.optionalInt(DEVICE_ID_FIELD),
+                keyCode = obj.requiredInt(KEY_CODE_FIELD),
+                modifierKeyCode = obj.requiredInt(MODIFIER_KEY_CODE_FIELD),
             )
             TYPE_AXIS -> InputConfigDto.AssignmentDto.Axis(
                 deviceId = obj.optionalInt(DEVICE_ID_FIELD),
@@ -104,9 +110,11 @@ class InputAssignmentDtoTypeAdapter : JsonSerializer<InputConfigDto.AssignmentDt
         const val TYPE_FIELD = "type"
         const val TYPE_NONE = "none"
         const val TYPE_KEY = "key"
+        const val TYPE_CHORD = "chord"
         const val TYPE_AXIS = "axis"
         const val DEVICE_ID_FIELD = "deviceId"
         const val KEY_CODE_FIELD = "keyCode"
+        const val MODIFIER_KEY_CODE_FIELD = "modifierKeyCode"
         const val AXIS_CODE_FIELD = "axisCode"
         const val DIRECTION_FIELD = "direction"
     }

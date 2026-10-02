@@ -21,6 +21,8 @@ import me.magnum.melonds.extensions.isSustainedPerformanceModeAvailable
 import me.magnum.melonds.impl.SettingsBackupManager
 import me.magnum.melonds.ui.settings.PreferenceFragmentHelper
 import me.magnum.melonds.ui.settings.PreferenceFragmentTitleProvider
+import me.magnum.melonds.ui.settings.preferences.StoragePickerPreference
+import me.magnum.melonds.extensions.addOnPreferenceChangeListener
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -86,6 +88,17 @@ class GeneralPreferencesFragment : BasePreferenceFragment(), PreferenceFragmentT
 
         helper.bindPreferenceSummaryToValue(rewindPreference)
         helper.bindPreferenceSummaryToValue(frameLimitSpeedPreference)
+        val screenshotDirectory = findPreference<StoragePickerPreference>("screenshot_directory")!!
+        helper.setupStoragePickerPreference(screenshotDirectory)
+        screenshotDirectory.addOnPreferenceChangeListener { _, value ->
+            if ((value as? Set<*>)?.isNotEmpty() != true) {
+                screenshotDirectory.summary = getString(R.string.screenshot_directory_default)
+            }
+            true
+        }
+        if (screenshotDirectory.getPersistedStringSet(null).isNullOrEmpty()) {
+            screenshotDirectory.summary = getString(R.string.screenshot_directory_default)
+        }
         updateFrameLimitSpeedPreferenceState()
         sustainedPerformancePreference.isVisible = requireContext().isSustainedPerformanceModeAvailable()
 

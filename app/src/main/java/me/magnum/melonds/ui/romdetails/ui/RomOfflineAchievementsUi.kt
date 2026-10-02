@@ -22,6 +22,7 @@ fun RomOfflineAchievementsUi(
     contentPadding: PaddingValues,
     offlineAchievementsUiState: OfflineAchievementsUiState,
     onSyncOfflineNow: () -> Unit,
+    onDiscardExpired: () -> Unit,
 ) {
     Column(
         modifier = modifier
@@ -35,6 +36,7 @@ fun RomOfflineAchievementsUi(
             modifier = Modifier.fillMaxWidth(),
             state = offlineAchievementsUiState,
             onSyncNow = onSyncOfflineNow,
+            onDiscardExpired = onDiscardExpired,
         )
         Spacer(Modifier.height(contentPadding.calculateBottomPadding() + 16.dp))
     }

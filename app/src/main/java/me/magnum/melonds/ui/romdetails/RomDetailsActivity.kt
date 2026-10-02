@@ -147,6 +147,7 @@ class RomDetailsActivity : AppCompatActivity() {
             LaunchedEffect(Unit) {
                 romRetroAchievementsViewModel.toastEvent.collectLatest { event ->
                     val message = when (event) {
+                        RomDetailsToastEvent.OfflineLedgerDiscardFailed -> getString(R.string.offline_ra_discard_failed)
                         is RomDetailsToastEvent.OfflineAchievementNotSynced -> {
                             val messageRes = when (event.reason) {
                                 RomDetailsToastEvent.OfflineAchievementNotSyncedReason.MISSING_FROM_CURRENT_SET -> R.string.offline_ra_sync_skipped_missing_toast
@@ -206,6 +207,9 @@ class RomDetailsActivity : AppCompatActivity() {
                     },
                     onOfflineSyncNow = {
                         romRetroAchievementsViewModel.syncOfflineAchievementsNow()
+                    },
+                    onOfflineDiscardExpired = {
+                        romRetroAchievementsViewModel.discardExpiredOfflineAchievements()
                     },
                     onSendSaveFile = { shareSaveFile(rom) },
                     onImportSaveFile = {

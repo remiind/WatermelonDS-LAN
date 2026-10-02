@@ -1,5 +1,6 @@
 #include "ScreenshotRenderer.h"
 #include <algorithm>
+#include <chrono>
 #include "MelonLog.h"
 #include "GPU.h"
 
@@ -10,6 +11,7 @@ ScreenshotRenderer::ScreenshotRenderer(u32* screenshotBuffer)
 {
     this->screenshotBuffer = screenshotBuffer;
     this->screenshotRequested = false;
+    this->screenshotSucceeded = false;
     this->stopped = false;
 }
 
@@ -31,6 +33,7 @@ void ScreenshotRenderer::renderScreenshot(GPU* gpu, Renderer renderer, Frame* re
         constexpr size_t screenshotPixelCount = static_cast<size_t>(256) * static_cast<size_t>(192) * 2;
         std::fill_n(screenshotBuffer, screenshotPixelCount, 0u);
         LOG_ERROR("Vulkan", "Vulkan screenshot capture must use VulkanOutput readback path");
+        notifyScreenshotReady(false);
         return;
     }
 
@@ -86,11 +89,15 @@ u32* ScreenshotRenderer::getScreenshot()
 bool ScreenshotRenderer::takeScreenshot()
 {
     std::unique_lock lock(screenshotMutex);
-
+    if (stopped)
+        return false;
+    screenshotSucceeded = false;
     screenshotRequested = true;
-    screenshotCondition.wait(lock);
-
-    return !stopped;
+    const bool completed = screenshotCondition.wait_for(lock, std::chrono::seconds(2), [this] {
+        return !screenshotRequested || stopped;
+    });
+    screenshotRequested = false;
+    return completed && !stopped && screenshotSucceeded;
 }
 
 bool ScreenshotRenderer::isScreenshotPending()
@@ -236,23 +243,23 @@ void ScreenshotRenderer::setupVertexBuffers()
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
 }
 
-void ScreenshotRenderer::notifyScreenshotReady()
+void ScreenshotRenderer::notifyScreenshotReady(bool success)
 {
     std::lock_guard lock(screenshotMutex);
+    screenshotSucceeded = success;
     screenshotRequested = false;
     screenshotCondition.notify_all();
 }
 
 void ScreenshotRenderer::cleanup()
 {
-    if (!initialized)
-        return;
-
     {
         std::lock_guard lock(screenshotMutex);
         stopped = true;
         screenshotCondition.notify_all();
     }
+    if (!initialized)
+        return;
     glDeleteShader(screenshotRenderVertexShader);
     glDeleteShader(screenshotRenderFragmentShader);
     glDeleteProgram(screenshotRenderShader);

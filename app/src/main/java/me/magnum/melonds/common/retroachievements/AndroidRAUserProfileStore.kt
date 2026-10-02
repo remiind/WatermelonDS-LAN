@@ -73,8 +73,16 @@ class AndroidRAUserProfileStore(private val sharedPreferences: SharedPreferences
         val username = sharedPreferences.getString(USERNAME_KEY, null) ?: return null
         return RAUserProfile(
             username = username,
-            score = sharedPreferences.getLong(SCORE_KEY, 0),
-            softcoreScore = sharedPreferences.getLong(SOFTCORE_SCORE_KEY, 0),
+            score = readScore(SCORE_KEY),
+            softcoreScore = readScore(SOFTCORE_SCORE_KEY),
         )
+    }
+
+    private fun readScore(key: String): Long = try {
+        sharedPreferences.getLong(key, 0L)
+    } catch (_: ClassCastException) {
+        sharedPreferences.getInt(key, 0).toLong().also { score ->
+            sharedPreferences.edit { putLong(key, score) }
+        }
     }
 }

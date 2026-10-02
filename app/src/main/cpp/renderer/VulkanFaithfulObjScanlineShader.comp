@@ -26,7 +26,7 @@ const uint kAtlasAOBJExtPal  = 0x110000u;
 const uint kAtlasBOBJExtPal  = 0x112000u;
 const uint kAtlasPalette     = 0x114000u;
 const uint kAtlasOAM         = 0x114800u;
-const uint kAtlasVivo        = 0x23D000u;
+const uint kAtlasVivo        = 0x26D000u;
 
 uint gRegBase = 0u;
 uint gAtlasBase = 0u;

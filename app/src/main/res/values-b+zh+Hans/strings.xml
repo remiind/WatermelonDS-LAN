@@ -256,8 +256,8 @@
     <string name="jit_not_supported">JIT 仅支持64位设备。</string>
     <string name="save_internal_config_as_file">将内部配置保存为文件</string>
     <string name="save_internal_config_as_file_summary">使 melonDualDS.opts 与存档文件目录保持同步；未配置存档文件目录时，则与 ROM 目录保持同步。</string>
-    <string name="system_app_log_file_enabled">将应用日志写入 ROM 文件夹</string>
-    <string name="system_app_log_file_enabled_summary">在第一个 ROM 文件夹中创建 melonDualLog.log，并记录应用、原生代码和核心的 logcat 日志用于调试。仅在复现问题时启用。</string>
+    <string name="system_app_log_file_enabled">WatermelonDS Log</string>
+    <string name="system_app_log_file_enabled_summary">在第一个 ROM 文件夹中创建 WatermelonDS.txt，并记录应用、原生代码和核心的 logcat 日志用于调试。仅在复现问题时启用。</string>
     <string name="backup_settings">备份设置</string>
     <string name="restore_settings">恢复设置</string>
     <string name="settings_backup_success">设置备份已创建。\n\n已跳过下列设置：\n&#8226; RetroAchievements 会话\n&#8226; ROM/存档目录\n&#8226; DS BIOS 目录\n&#8226; DSi BIOS 目录</string>
@@ -1123,4 +1123,48 @@
         <item>3（渲染 1 帧，跳过 3 帧）</item>
         <item>4（渲染 1 帧，跳过 4 帧）</item>
     </string-array>
+    <string name="video_low_latency">低延迟</string>
+    <string name="video_low_latency_summary">优先降低操作延迟。可能会降低性能和流畅度。启动游戏时生效。</string>
+    <string name="offline_ra_discard_expired_title">丢弃已过期的离线解锁记录？</string>
+    <string name="offline_ra_discard_expired_message">仅从待同步队列中移除此游戏和账户的已过期记录。近期离线解锁记录和已在线获得的成就将保留。已过期且未获授予的成就需要重新达成。</string>
+    <string name="offline_ra_discard_expired_button">丢弃已过期记录</string>
+    <string name="offline_ra_discard_failed">无法丢弃全部已过期记录。请检查剩余队列后重试。</string>
+    <string name="sync_rtc_on_resume">返回游戏时同步时钟</string>
+    <string name="sync_rtc_on_resume_summary">从休眠或其他应用返回时更新模拟时钟，并保留自定义时间偏移。</string>
+    <string name="emulated_clock">模拟时钟</string>
+    <string name="emulated_clock_device">使用设备时间。可选择其他时间来体验游戏中的昼夜变化。</string>
+    <string name="emulated_clock_offset">设备时间 %1$s。时钟会继续运行。</string>
+    <string name="emulated_clock_reset">使用设备时间</string>
+    <string name="emulated_clock_hardcore">硬核模式使用设备时间。</string>
+    <string name="input_cycle_layout">切换布局</string>
+    <string name="input_exit_game">退出游戏</string>
+    <string name="cycle_layouts">循环切换的布局</string>
+    <string name="cycle_layouts_summary">选择通过切换布局快捷键按布局库顺序循环切换的布局。不选择任何布局将禁用循环切换。</string>
+    <string name="button_mode">按键模式</string>
+    <string name="button_mode_value">模式：%1$s</string>
+    <string name="button_mode_normal">普通（按住）</string>
+    <string name="button_mode_toggle">切换（点击保持或松开）</string>
+    <string name="button_mode_turbo">连发（按住时每秒 10 次）</string>
+    <string name="input_combo">组合键</string>
+    <string name="waiting_for_combo">同时按住同一控制器上的两个不同按键。组合完成前，第一个按键仍可能触发原有功能；使用未分配功能的按键作为修饰键可避免此情况。</string>
+    <string name="input_combo_conflict">此组合已分配给 %1$s。请先清除原分配，或选择其他按键组合。</string>
+    <string name="input_slot2_analog">Slot-2 模拟摇杆</string>
+    <string name="wfc_settings_title">Nintendo WFC 设置</string>
+    <string name="wfc_settings_summary">使用内置固件时，将 wfcsettings.bin 保存在可与电脑同步的文件夹中。已有文件将保留；空文件夹将接收当前配置。请在两个模拟器中设置相同的 MAC 地址，并仅在两者都关闭时同步。更改将在下次启动游戏时生效。</string>
+    <string name="wfc_settings_directory">WFC 设置文件夹</string>
+    <string name="wfc_settings_use_internal">使用应用内部存储保存 WFC</string>
+    <string name="wfc_settings_reset_summary">恢复使用原先的内部配置。所选文件夹中的文件将保留。</string>
+    <string name="wfc_settings_error">文件夹必须可写，wfcsettings.bin 必须为空或恰好为 2304 字节。请检查访问权限和文件后重试。</string>
+    <string name="input_screenshot">截取屏幕</string>
+    <string name="screenshot_directory">截图文件夹</string>
+    <string name="screenshot_directory_default">应用存储 / screenshots</string>
+    <string name="screenshot_saved">截图已保存：%1$s</string>
+    <string name="screenshot_failed">无法保存截图。请检查文件夹访问权限，并在游戏运行时重试。</string>
+    <string name="freedreno_settings">Freedreno 设置</string>
+    <string name="freedreno_summary">Turnip/Freedreno 高级选项。留空以使用驱动默认值。更改后需要重启应用。驱动可能忽略不支持的选项。</string>
+    <string name="freedreno_default">驱动默认值</string>
+    <string name="freedreno_invalid">最多输入 2048 个 ASCII 字符，不可换行。</string>
+    <string name="freedreno_restart">重启 WatermelonDS 以保存并应用此更改。</string>
+    <string name="freedreno_restart_button">重启</string>
+    <string name="freedreno_save_failed">无法保存设置。点击重启以重试。</string>
 </resources>

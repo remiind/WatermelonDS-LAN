@@ -518,6 +518,12 @@ bool VulkanSurfacePresenter::init()
         return false;
     }
 
+    if (lowLatencyEnabled && melonDS::VulkanContext::Get().SupportsDisplayTiming())
+    {
+        getPastPresentationTiming = reinterpret_cast<PFN_vkGetPastPresentationTimingGOOGLE>(
+            vkGetDeviceProcAddr(device, "vkGetPastPresentationTimingGOOGLE"));
+    }
+
     if (!createCommonResources())
     {
         shutdown();
@@ -539,9 +545,19 @@ void VulkanSurfacePresenter::shutdown()
 {
     if (device != VK_NULL_HANDLE)
     {
-        std::scoped_lock queueLock(melonDS::VulkanContext::Get().GetPresentQueueLock());
-        vkQueueWaitIdle(queue);
+        auto& context = melonDS::VulkanContext::Get();
+        if (hasExternalTimelineConsumer && context.IsPresentQueueDedicated())
+        {
+            std::scoped_lock queueLocks(context.GetQueueLock(), context.GetPresentQueueLock());
+            vkDeviceWaitIdle(device);
+        }
+        else
+        {
+            std::scoped_lock queueLock(context.GetPresentQueueLock());
+            vkQueueWaitIdle(queue);
+        }
     }
+    hasExternalTimelineConsumer = false;
 
     clearPrewarmedRetroArchFilters();
 
@@ -569,6 +585,7 @@ void VulkanSurfacePresenter::shutdown()
     instance = VK_NULL_HANDLE;
     physicalDevice = VK_NULL_HANDLE;
     device = VK_NULL_HANDLE;
+    getPastPresentationTiming = nullptr;
     queue = VK_NULL_HANDLE;
     queueFamilyIndex = 0;
     useTimelineSemaphores = false;
@@ -1174,19 +1191,6 @@ VulkanPresentationResult VulkanSurfacePresenter::presentFrame(
     if (frame == nullptr)
         return VulkanPresentationResult::NoProduct;
 
-    const VulkanCausalWaitResult frameWaitResult = waitRunner(
-        "VulkanPump.WaitRenderProduct",
-        [&] { return output.waitForFrame(frame, gpuWaitTimeoutNs); });
-    if (frameWaitResult == VulkanCausalWaitResult::GenerationChanged)
-        return VulkanPresentationResult::GenerationChanged;
-    if (frameWaitResult == VulkanCausalWaitResult::Stopped)
-        return VulkanPresentationResult::Stopped;
-    if (frameWaitResult != VulkanCausalWaitResult::Ready)
-    {
-        frameWaitFailures++;
-        return VulkanPresentationResult::GpuNotReady;
-    }
-
     const bool hasRequiredDirectHandles =
         inputs.sourceImage != VK_NULL_HANDLE
         && inputs.sourceImageView != VK_NULL_HANDLE
@@ -1219,6 +1223,28 @@ VulkanPresentationResult VulkanSurfacePresenter::presentFrame(
             return surfaceState.configured
                 && IsVulkanPostProcessFilter(surfaceState.config.filtering);
         });
+
+    VkSemaphore sourceReadySemaphore = VK_NULL_HANDLE;
+    u64 sourceReadyValue = 0;
+    const bool preparedGpuDependency = lowLatencyEnabled && !fastForwardActive
+        && !inputs.needsReadback && !inputs.validationMode
+        && !postProcessFilterRequested && !hasRequiredDirectHandles
+        && output.getFramePresentationDependency(frame, sourceReadySemaphore, sourceReadyValue);
+    if (!preparedGpuDependency)
+    {
+        const VulkanCausalWaitResult frameWaitResult = waitRunner(
+            "VulkanPump.WaitRenderProduct",
+            [&] { return output.waitForFrame(frame, gpuWaitTimeoutNs); });
+        if (frameWaitResult == VulkanCausalWaitResult::GenerationChanged)
+            return VulkanPresentationResult::GenerationChanged;
+        if (frameWaitResult == VulkanCausalWaitResult::Stopped)
+            return VulkanPresentationResult::Stopped;
+        if (frameWaitResult != VulkanCausalWaitResult::Ready)
+        {
+            frameWaitFailures++;
+            return VulkanPresentationResult::GpuNotReady;
+        }
+    }
 
     const bool directPresentHasDualScreen3dSource =
         !hasDualScreenSurface
@@ -1341,6 +1367,13 @@ VulkanPresentationResult VulkanSurfacePresenter::presentFrame(
         if (frameImage != VK_NULL_HANDLE && frameImageView != VK_NULL_HANDLE)
             return true;
 
+        if (preparedGpuDependency)
+        {
+            frameImage = output.getFrameImage(frame);
+            frameImageView = output.getFrameImageView(frame);
+            return frameImage != VK_NULL_HANDLE && frameImageView != VK_NULL_HANDLE;
+        }
+
         const u64 composeSubmitStartNs = PerfNowNs();
         if (!output.composeAndSubmitFrame(frame, inputs))
         {
@@ -1406,7 +1439,11 @@ VulkanPresentationResult VulkanSurfacePresenter::presentFrame(
     }
 
     const u64 totalStartNs = PerfNowNs();
-    const u64 deadlineNs = timeoutNs == UINT64_MAX ? UINT64_MAX : (totalStartNs + timeoutNs);
+    const u64 platformTimeoutNs = preparedGpuDependency
+        ? std::max(timeoutNs, gpuWaitTimeoutNs)
+        : timeoutNs;
+    const u64 deadlineNs = platformTimeoutNs == UINT64_MAX
+        ? UINT64_MAX : (totalStartNs + platformTimeoutNs);
     u64 descriptorCpuNs = 0;
     u64 vertexCpuNs = 0;
     u64 acquireCpuNs = 0;
@@ -1820,13 +1857,14 @@ VulkanPresentationResult VulkanSurfacePresenter::presentFrame(
         const bool submitSucceeded = submitSurfaceCommands(
             surfaceState,
             imageIndex,
+            sourceReadySemaphore,
+            sourceReadyValue,
             surfacePresentCpuNs,
             surfacePresentTimelineValue,
             queueSubmitSucceeded,
             presentAccepted);
         if (queueSubmitSucceeded)
         {
-
             submittedAnySurface = true;
             framePresentTimelineValue = std::max(
                 framePresentTimelineValue,
@@ -2279,6 +2317,28 @@ bool VulkanSurfacePresenter::waitForPresentFenceToken(
     slot->obligationCount = 0;
     slot->surfaceObligations.clear();
     token.clear();
+    return true;
+}
+
+bool VulkanSurfacePresenter::getFrameConsumptionDependency(const Frame* frame, VkSemaphore& semaphore, u64& value)
+{
+    semaphore = VK_NULL_HANDLE;
+    value = 0;
+    std::scoped_lock lock(presentConsumptionMutex);
+    if (frame == nullptr || !initialized || !useTimelineSemaphores
+        || timelineSemaphore == VK_NULL_HANDLE)
+        return false;
+    const auto& token = frame->presentConsumptionToken;
+    if (token.kind != PresentConsumptionKind::Timeline
+        || token.frameId != frame->frameId
+        || token.publicationGeneration != frame->publicationGeneration
+        || token.presenterEpoch != presenterEpoch
+        || token.timelineValue == 0 || token.completionSerial != token.timelineValue
+        || token.surfaceObligations.empty())
+        return false;
+    semaphore = timelineSemaphore;
+    value = token.timelineValue;
+    hasExternalTimelineConsumer = true;
     return true;
 }
 
@@ -5791,6 +5851,8 @@ bool VulkanSurfacePresenter::recordSurfaceCommands(
 bool VulkanSurfacePresenter::submitSurfaceCommands(
     SurfaceState& surfaceState,
     u32 imageIndex,
+    VkSemaphore sourceReadySemaphore,
+    u64 sourceReadyValue,
     u64& presentCpuNs,
     u64& presentTimelineValueOut,
     bool& queueSubmitSucceededOut,
@@ -5816,18 +5878,27 @@ bool VulkanSurfacePresenter::submitSurfaceCommands(
 
     RetroArchResources& retro = surfaceState.retroArch;
     const bool waitsForFilter = retro.filterSignalPending;
-    std::array<VkSemaphore, 2> waitSemaphores = {
+    std::array<VkSemaphore, 3> waitSemaphores = {
         surfaceState.imageAvailableSemaphore,
         retro.filterFinishedSemaphore,
     };
-    std::array<VkPipelineStageFlags, 2> waitStages = {
+    std::array<VkPipelineStageFlags, 3> waitStages = {
         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
     };
+    std::array<u64, 3> waitValues{};
+    u32 waitCount = waitsForFilter ? 2u : 1u;
+    if (sourceReadySemaphore != VK_NULL_HANDLE)
+    {
+        waitSemaphores[waitCount] = sourceReadySemaphore;
+        waitStages[waitCount] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        waitValues[waitCount] = sourceReadyValue;
+        ++waitCount;
+    }
 
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.waitSemaphoreCount = waitsForFilter ? 2u : 1u;
+    submitInfo.waitSemaphoreCount = waitCount;
     submitInfo.pWaitSemaphores = waitSemaphores.data();
     submitInfo.pWaitDstStageMask = waitStages.data();
     submitInfo.commandBufferCount = 1;
@@ -5858,6 +5929,16 @@ bool VulkanSurfacePresenter::submitSurfaceCommands(
         submitInfo.pSignalSemaphores = &renderFinishedSemaphore;
     }
 
+    if (sourceReadySemaphore != VK_NULL_HANDLE)
+    {
+        timelineSubmitInfo.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
+        timelineSubmitInfo.waitSemaphoreValueCount = waitCount;
+        timelineSubmitInfo.pWaitSemaphoreValues = waitValues.data();
+        timelineSubmitInfo.signalSemaphoreValueCount = submitInfo.signalSemaphoreCount;
+        timelineSubmitInfo.pSignalSemaphoreValues = signalSemaphoreValues.data();
+        submitInfo.pNext = &timelineSubmitInfo;
+    }
+
     VkPresentInfoKHR presentInfo{};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     presentInfo.waitSemaphoreCount = 1;
@@ -5865,6 +5946,45 @@ bool VulkanSurfacePresenter::submitSurfaceCommands(
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = &surfaceState.swapchain;
     presentInfo.pImageIndices = &imageIndex;
+
+    VkPresentTimeGOOGLE presentTime{};
+    VkPresentTimesInfoGOOGLE presentTimes{};
+    if (getPastPresentationTiming != nullptr && !isFastForwardActive())
+    {
+        presentTime.presentID = surfaceState.nextDisplayTimingId++;
+        if (surfaceState.nextDisplayTimingId == 0)
+            surfaceState.nextDisplayTimingId = 1;
+        presentTime.desiredPresentTime = PerfNowNs();
+        presentTimes.sType = VK_STRUCTURE_TYPE_PRESENT_TIMES_INFO_GOOGLE;
+        presentTimes.swapchainCount = 1;
+        presentTimes.pTimes = &presentTime;
+        presentInfo.pNext = &presentTimes;
+
+        if (ATrace_isEnabled())
+        {
+            std::array<VkPastPresentationTimingGOOGLE, 16> timings{};
+            u32 count = static_cast<u32>(timings.size());
+            const VkResult result = getPastPresentationTiming(
+                device, surfaceState.swapchain, &count, timings.data());
+            if (result == VK_SUCCESS || result == VK_INCOMPLETE)
+            {
+                for (u32 i = 0; i < std::min(count, static_cast<u32>(timings.size())); ++i)
+                {
+                    const auto& timing = timings[i];
+                    melonDS::Platform::Log(melonDS::Platform::LogLevel::Warn,
+                        "VulkanDisplayTiming: surface=%d epoch=%llu swapchain=%llu present=%u desired=%llu actual=%llu earliest=%llu margin=%llu",
+                        surfaceState.id,
+                        static_cast<unsigned long long>(surfaceState.surfaceEpoch),
+                        static_cast<unsigned long long>(surfaceState.swapchainGeneration),
+                        timing.presentID,
+                        static_cast<unsigned long long>(timing.desiredPresentTime),
+                        static_cast<unsigned long long>(timing.actualPresentTime),
+                        static_cast<unsigned long long>(timing.earliestPresentTime),
+                        static_cast<unsigned long long>(timing.presentMargin));
+                }
+            }
+        }
+    }
 
     VkResult submitResult = VK_SUCCESS;
     VkResult presentResult = VK_SUCCESS;

@@ -52,4 +52,23 @@
             android:title="@string/mac_address"
             android:dependency="internal_randomize_mac_address"
             app:iconSpaceReserved="false"/>
+    <Preference
+            android:title="@string/wfc_settings_title"
+            android:summary="@string/wfc_settings_summary"
+            android:selectable="false"
+            app:iconSpaceReserved="false" />
+
+    <me.magnum.melonds.ui.settings.preferences.StoragePickerPreference
+            android:key="wfc_settings_dir"
+            android:title="@string/wfc_settings_directory"
+            app:iconSpaceReserved="false"
+            app:type="directory"
+            app:permissions="read_write"
+            app:persistPermissions="true" />
+
+    <Preference
+            android:key="wfc_settings_reset"
+            android:title="@string/wfc_settings_use_internal"
+            android:summary="@string/wfc_settings_reset_summary"
+            app:iconSpaceReserved="false" />
 </PreferenceScreen>

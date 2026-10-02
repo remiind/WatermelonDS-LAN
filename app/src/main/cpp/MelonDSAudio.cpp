@@ -158,6 +158,10 @@ namespace MelonDSAndroid
                 candidate->stream->getBufferCapacityInFrames(),
                 bufferFrames));
 
+        if (currentInstance)
+            currentInstance->configureAudioOutputTransport(
+                std::max(requestedBufferFrames, 2 * framesPerBurst));
+
         if (areRendererDebugToolsEnabled()) [[unlikely]]
         {
 

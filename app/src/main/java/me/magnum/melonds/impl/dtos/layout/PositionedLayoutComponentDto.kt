@@ -2,6 +2,7 @@ package me.magnum.melonds.impl.dtos.layout
 
 import com.google.gson.annotations.SerializedName
 import me.magnum.melonds.domain.model.layout.PositionedLayoutComponent
+import me.magnum.melonds.domain.model.layout.VirtualButtonMode
 import me.magnum.melonds.utils.enumValueOfIgnoreCase
 
 data class PositionedLayoutComponentDto(
@@ -13,6 +14,8 @@ data class PositionedLayoutComponentDto(
     val alpha: Float? = null,
     @SerializedName("onTop")
     val onTop: Boolean? = null,
+    @SerializedName("buttonMode")
+    val buttonMode: String? = null,
 ) {
 
     companion object {
@@ -22,6 +25,7 @@ data class PositionedLayoutComponentDto(
                 positionedLayoutComponent.component.name,
                 positionedLayoutComponent.alpha,
                 positionedLayoutComponent.onTop,
+                positionedLayoutComponent.buttonMode.takeUnless { it == VirtualButtonMode.NORMAL }?.name,
             )
         }
     }
@@ -32,6 +36,7 @@ data class PositionedLayoutComponentDto(
             enumValueOfIgnoreCase(component),
             alpha ?: 1f,
             onTop ?: false,
+            VirtualButtonMode.entries.firstOrNull { it.name.equals(buttonMode, ignoreCase = true) } ?: VirtualButtonMode.NORMAL,
         )
     }
 }

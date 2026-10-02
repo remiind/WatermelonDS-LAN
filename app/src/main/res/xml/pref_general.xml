@@ -53,6 +53,14 @@
             app:iconSpaceReserved="false"
             android:defaultValue="false" />
 
+    <me.magnum.melonds.ui.settings.preferences.StoragePickerPreference
+            android:key="screenshot_directory"
+            android:title="@string/screenshot_directory"
+            app:iconSpaceReserved="false"
+            app:type="directory"
+            app:permissions="read_write"
+            app:persistPermissions="true" />
+
     <Preference
             android:key="backup_settings"
             android:title="@string/backup_settings"

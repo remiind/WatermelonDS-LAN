@@ -23,11 +23,17 @@ abstract class MultiButtonInputHandler(inputListener: IInputListener, enableHapt
 
         newPressedInputs.clear()
 
-        when (event.action) {
-            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
-                buttonCircles.forEach {
-                    if (it.containsPoint(event.x, event.y)) {
-                        newPressedInputs.add(it.input)
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE,
+            MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP -> {
+                val releasedPointerIndex = if (event.actionMasked == MotionEvent.ACTION_POINTER_UP) event.actionIndex else -1
+                buttonCircles.forEach { circle ->
+                    for (pointerIndex in 0 until event.pointerCount) {
+                        if (pointerIndex == releasedPointerIndex) continue
+                        if (circle.containsPoint(event.getX(pointerIndex), event.getY(pointerIndex))) {
+                            newPressedInputs.add(circle.input)
+                            break
+                        }
                     }
                 }
             }

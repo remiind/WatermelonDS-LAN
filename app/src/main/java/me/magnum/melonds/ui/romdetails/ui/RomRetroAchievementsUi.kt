@@ -52,6 +52,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import me.magnum.melonds.ui.common.component.dialog.BaseDialog
+import me.magnum.melonds.ui.common.component.dialog.DialogButton
 import me.magnum.melonds.R
 import me.magnum.melonds.domain.model.retroachievements.RAUserAchievement
 import me.magnum.melonds.ui.common.MelonPreviewSet
@@ -139,7 +141,26 @@ fun OfflineAchievementsStatusUi(
     modifier: Modifier,
     state: OfflineAchievementsUiState,
     onSyncNow: () -> Unit,
+    onDiscardExpired: () -> Unit,
 ) {
+    var showDiscardConfirmation by rememberSaveable { mutableStateOf(false) }
+    if (showDiscardConfirmation) {
+        BaseDialog(
+            title = stringResource(R.string.offline_ra_discard_expired_title),
+            onDismiss = { showDiscardConfirmation = false },
+            content = { Text(stringResource(R.string.offline_ra_discard_expired_message), Modifier.padding(it)) },
+            buttons = {
+                DialogButton(stringResource(R.string.cancel)) { showDiscardConfirmation = false }
+                DialogButton(
+                    text = stringResource(R.string.offline_ra_discard_expired_button),
+                    enabled = state.canDiscardExpired,
+                ) {
+                    showDiscardConfirmation = false
+                    onDiscardExpired()
+                }
+            },
+        )
+    }
     ConfigSection(
         title = stringResource(id = R.string.offline_ra_settings_title),
         modifier = modifier,
@@ -169,7 +190,7 @@ fun OfflineAchievementsStatusUi(
             highlight = !state.isLedgerIntegrityOk,
         )
 
-        if (state.isSyncing) {
+        if (state.isSyncing || state.isDiscarding) {
             LinearProgressIndicator(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
                 color = MaterialTheme.colors.secondary,
@@ -183,6 +204,16 @@ fun OfflineAchievementsStatusUi(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
             Text(text = stringResource(id = R.string.offline_ra_sync_now_button).uppercase())
+        }
+        if (state.isLedgerExpired) {
+            Button(
+                onClick = { showDiscardConfirmation = true },
+                enabled = state.canDiscardExpired,
+                colors = melonButtonColors(),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            ) {
+                Text(stringResource(R.string.offline_ra_discard_expired_button).uppercase())
+            }
         }
     }
 }

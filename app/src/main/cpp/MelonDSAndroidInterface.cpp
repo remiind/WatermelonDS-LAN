@@ -137,11 +137,18 @@ bool hasRequiredInstanceExtensions()
 
 bool hasRequiredDeviceExtensions(VkInstance instance, VkPhysicalDevice physicalDevice)
 {
+    const auto getPhysicalDeviceProperties = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(
+        vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceProperties"));
+    const auto enumerateDeviceExtensionProperties = reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(
+        vkGetInstanceProcAddr(instance, "vkEnumerateDeviceExtensionProperties"));
+    const auto getPhysicalDeviceFeatures = reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures>(
+        vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceFeatures"));
+
     VkPhysicalDeviceProperties properties{};
-    vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+    getPhysicalDeviceProperties(physicalDevice, &properties);
 
     uint32_t extensionCount = 0;
-    if (vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &extensionCount, nullptr) != VK_SUCCESS)
+    if (enumerateDeviceExtensionProperties(physicalDevice, nullptr, &extensionCount, nullptr) != VK_SUCCESS)
     {
         melonDS::Platform::Log(
             melonDS::Platform::LogLevel::Warn,
@@ -152,7 +159,7 @@ bool hasRequiredDeviceExtensions(VkInstance instance, VkPhysicalDevice physicalD
     }
 
     std::vector<VkExtensionProperties> extensions(extensionCount);
-    if (vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &extensionCount, extensions.data()) != VK_SUCCESS)
+    if (enumerateDeviceExtensionProperties(physicalDevice, nullptr, &extensionCount, extensions.data()) != VK_SUCCESS)
     {
         melonDS::Platform::Log(
             melonDS::Platform::LogLevel::Warn,
@@ -234,7 +241,7 @@ bool hasRequiredDeviceExtensions(VkInstance instance, VkPhysicalDevice physicalD
     }
     else
     {
-        vkGetPhysicalDeviceFeatures(physicalDevice, &features2.features);
+        getPhysicalDeviceFeatures(physicalDevice, &features2.features);
     }
 
     if (timelineFeatures.timelineSemaphore != VK_TRUE)
@@ -314,14 +321,18 @@ bool createVulkanInstance(VkInstance* instance)
         return false;
     }
 
-    melonDS::VulkanDispatch::LoadInstance(*instance);
     return true;
 }
 
 bool pickGraphicsDevice(VkInstance instance, VkPhysicalDevice* physicalDevice, uint32_t* queueFamilyIndex)
 {
+    const auto enumeratePhysicalDevices = reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(
+        vkGetInstanceProcAddr(instance, "vkEnumeratePhysicalDevices"));
+    const auto getPhysicalDeviceQueueFamilyProperties = reinterpret_cast<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(
+        vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceQueueFamilyProperties"));
+
     uint32_t physicalDeviceCount = 0;
-    const VkResult enumerateResult = vkEnumeratePhysicalDevices(instance, &physicalDeviceCount, nullptr);
+    const VkResult enumerateResult = enumeratePhysicalDevices(instance, &physicalDeviceCount, nullptr);
     if (enumerateResult != VK_SUCCESS || physicalDeviceCount == 0)
     {
         melonDS::Platform::Log(
@@ -334,7 +345,7 @@ bool pickGraphicsDevice(VkInstance instance, VkPhysicalDevice* physicalDevice, u
     }
 
     std::vector<VkPhysicalDevice> physicalDevices(physicalDeviceCount);
-    vkEnumeratePhysicalDevices(instance, &physicalDeviceCount, physicalDevices.data());
+    enumeratePhysicalDevices(instance, &physicalDeviceCount, physicalDevices.data());
 
     bool hasGraphicsQueue = false;
     for (const VkPhysicalDevice currentPhysicalDevice : physicalDevices)
@@ -343,12 +354,12 @@ bool pickGraphicsDevice(VkInstance instance, VkPhysicalDevice* physicalDevice, u
             continue;
 
         uint32_t queueFamilyCount = 0;
-        vkGetPhysicalDeviceQueueFamilyProperties(currentPhysicalDevice, &queueFamilyCount, nullptr);
+        getPhysicalDeviceQueueFamilyProperties(currentPhysicalDevice, &queueFamilyCount, nullptr);
         if (queueFamilyCount == 0)
             continue;
 
         std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
-        vkGetPhysicalDeviceQueueFamilyProperties(currentPhysicalDevice, &queueFamilyCount, queueFamilies.data());
+        getPhysicalDeviceQueueFamilyProperties(currentPhysicalDevice, &queueFamilyCount, queueFamilies.data());
         for (uint32_t i = 0; i < queueFamilyCount; i++)
         {
             const VkQueueFamilyProperties& queueFamily = queueFamilies[i];
@@ -382,10 +393,12 @@ bool isVulkanRendererSupported()
     if (!createVulkanInstance(&instance))
         return false;
 
+    const auto destroyInstance = reinterpret_cast<PFN_vkDestroyInstance>(
+        vkGetInstanceProcAddr(instance, "vkDestroyInstance"));
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
     uint32_t queueFamilyIndex = 0;
     const bool result = pickGraphicsDevice(instance, &physicalDevice, &queueFamilyIndex);
-    vkDestroyInstance(instance, nullptr);
+    destroyInstance(instance, nullptr);
     return result;
 }
 

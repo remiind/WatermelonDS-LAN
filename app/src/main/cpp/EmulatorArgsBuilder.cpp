@@ -201,7 +201,7 @@ void customizeFirmware(const EmulatorConfiguration& configuration, Firmware& fir
     firmware.UpdateChecksums();
 }
 
-Firmware generateFirmware(const EmulatorConfiguration& configuration, int type, int instanceId) noexcept
+std::optional<Firmware> generateFirmware(const EmulatorConfiguration& configuration, int type, int instanceId) noexcept
 {
     const std::string kWifiSettingsPath = "wfcsettings.bin";
 
@@ -214,7 +214,34 @@ Firmware generateFirmware(const EmulatorConfiguration& configuration, int type, 
     // Wi-fi access point data includes Nintendo WFC settings,
     // and if we didn't keep them then the player would have to reset them in each session.
     // We don't need to save the whole firmware, just the part that may actually change.
-    if (FileHandle* f = OpenInternalFile(kWifiSettingsPath, Read))
+    if (!configuration.wfcSettingsPath.empty())
+    {
+        constexpr unsigned size = 3 * (sizeof(Firmware::WifiAccessPoint) + sizeof(Firmware::ExtendedWifiAccessPoint));
+        std::unique_ptr<FileHandle, decltype(&CloseFile)> file(
+            OpenFile(configuration.wfcSettingsPath, Read), CloseFile);
+        if (file)
+            file.reset(OpenFile(configuration.wfcSettingsPath, ReadWriteExisting));
+        if (!file)
+        {
+            Log(Error, "Selected WFC settings file is not accessible\n");
+            return std::nullopt;
+        }
+        const auto length = FileLength(file.get());
+        if (length == 0)
+        {
+            if (FileWrite(firmware.GetExtendedAccessPointPosition(), size, 1, file.get()) != 1 || !FileFlush(file.get()))
+            {
+                Log(Error, "Failed to initialize selected WFC settings file\n");
+                return std::nullopt;
+            }
+        }
+        else if (length != size || FileRead(firmware.GetExtendedAccessPointPosition(), size, 1, file.get()) != 1)
+        {
+            Log(Error, "Selected WFC settings file has invalid data\n");
+            return std::nullopt;
+        }
+    }
+    else if (FileHandle* f = OpenInternalFile(kWifiSettingsPath, Read))
     {// If we have Wi-fi settings to load...
         constexpr unsigned TOTAL_WFC_SETTINGS_SIZE = 3 * (sizeof(Firmware::WifiAccessPoint) + sizeof(Firmware::ExtendedWifiAccessPoint));
 
@@ -238,8 +265,8 @@ Firmware generateFirmware(const EmulatorConfiguration& configuration, int type, 
                 Firmware::ExtendedWifiAccessPoint(),
             };
             firmware.UpdateChecksums();
-            CloseFile(f);
         }
+        CloseFile(f);
     }
 
     customizeFirmware(configuration, firmware, true, instanceId);

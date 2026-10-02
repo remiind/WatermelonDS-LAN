@@ -4,6 +4,7 @@ import android.view.View
 import android.widget.FrameLayout
 import androidx.core.view.updateLayoutParams
 import me.magnum.melonds.domain.model.layout.LayoutComponent
+import me.magnum.melonds.domain.model.layout.VirtualButtonMode
 import me.magnum.melonds.domain.model.Point
 import me.magnum.melonds.domain.model.Rect
 
@@ -15,6 +16,7 @@ class LayoutComponentView(val view: View, val aspectRatio: Float, val component:
         }
 
     var onTop: Boolean = false
+    var buttonMode: VirtualButtonMode = VirtualButtonMode.NORMAL
 
     fun setPosition(position: Point) {
         view.updateLayoutParams<FrameLayout.LayoutParams> {

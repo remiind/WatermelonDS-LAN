@@ -38,6 +38,7 @@ import me.magnum.melonds.domain.model.defaultInternalAlignment
 import me.magnum.melonds.ui.settings.PreferenceFragmentHelper
 import me.magnum.melonds.ui.settings.PreferenceFragmentTitleProvider
 import me.magnum.melonds.ui.settings.SettingsActivity
+import me.magnum.melonds.ui.settings.preferences.InGameLockedSwitchPreference
 import me.magnum.melonds.ui.settings.preferences.InGameLockedListPreference
 import me.magnum.melonds.ui.settings.preferences.StoragePickerPreference
 import me.magnum.melonds.extensions.addOnPreferenceChangeListener
@@ -90,6 +91,7 @@ class VideoPreferencesFragment : BasePreferenceFragment(), PreferenceFragmentTit
         const val GLES_3_2 = 0x30002
         const val VULKAN_SYSTEM_DRIVER_VALUE = "system"
         const val SHADER_LOG_FILE_NAME = "librashader.log"
+        const val FREEDRENO_SETTINGS_KEY = "video_freedreno_settings"
         const val SHADER_SETTINGS_KEY = "video_retroarch_shader_settings"
         const val HEAVY_PRESET_BADGE_THRESHOLD_MS = 60_000L
     }
@@ -129,6 +131,11 @@ class VideoPreferencesFragment : BasePreferenceFragment(), PreferenceFragmentTit
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         setPreferencesFromResource(R.xml.pref_video, rootKey)
 
+        if (rootKey == FREEDRENO_SETTINGS_KEY) {
+            setupFreedrenoSettingsSubScreen()
+            return
+        }
+
         if (rootKey == SHADER_SETTINGS_KEY) {
             setupShaderSettingsSubScreen()
             return
@@ -142,6 +149,11 @@ class VideoPreferencesFragment : BasePreferenceFragment(), PreferenceFragmentTit
         listOf(rendererPreference, internalResolutionPreference).forEach {
             it.isInGameLocked = launchedInGame
             it.inGameLockedMessageRes = R.string.video_setting_cannot_change_ingame
+        }
+
+        findPreference<InGameLockedSwitchPreference>("video_low_latency")!!.apply {
+            isInGameLocked = launchedInGame
+            inGameLockedMessageRes = R.string.video_setting_cannot_change_ingame
         }
 
         threadedRendererPreferences.apply {
@@ -346,6 +358,32 @@ class VideoPreferencesFragment : BasePreferenceFragment(), PreferenceFragmentTit
         )
         updateDsiCameraImagePreference(dsiCameraImagePreference, dsiCameraSourcePreference.value)
         updateDualScreenPresetSummary()
+    }
+
+    private fun setupFreedrenoSettingsSubScreen() {
+        preferenceScreen.isEnabled =
+            me.magnum.melonds.impl.AdrenoVulkanDriverSupport.isSupported(requireContext()) &&
+            !requireActivity().intent.getBooleanExtra(SettingsActivity.KEY_IN_GAME, false)
+        for (variable in me.magnum.melonds.impl.FreedrenoSettings.variables) {
+            findPreference<EditTextPreference>(
+                me.magnum.melonds.impl.FreedrenoSettings.preferenceKey(variable),
+            )?.apply {
+                summaryProvider = Preference.SummaryProvider<EditTextPreference> {
+                    it.text?.takeIf { value -> value.isNotBlank() } ?: getString(R.string.freedreno_default)
+                }
+                setOnBindEditTextListener { it.setSingleLine(true) }
+                setOnPreferenceChangeListener { _, value ->
+                    val nextValue = value as String
+                    if (!me.magnum.melonds.impl.FreedrenoSettings.isValid(nextValue)) {
+                        Toast.makeText(requireContext(), R.string.freedreno_invalid, Toast.LENGTH_LONG).show()
+                    } else if (nextValue.trim() != text.orEmpty().trim()) {
+                        FreedrenoRestartDialog.create(key, nextValue.trim())
+                            .show(childFragmentManager, "freedreno_restart")
+                    }
+                    false
+                }
+            }
+        }
     }
 
     private fun setupVulkanDriverPreferences(
@@ -1878,10 +1916,10 @@ class VideoPreferencesFragment : BasePreferenceFragment(), PreferenceFragmentTit
     }
 
     override fun getTitle(): String {
-        return if (arguments?.getString(ARG_PREFERENCE_ROOT) == SHADER_SETTINGS_KEY) {
-            getString(R.string.video_retroarch_shader_settings_title)
-        } else {
-            getString(R.string.category_video)
+        return when (arguments?.getString(ARG_PREFERENCE_ROOT)) {
+            FREEDRENO_SETTINGS_KEY -> getString(R.string.freedreno_settings)
+            SHADER_SETTINGS_KEY -> getString(R.string.video_retroarch_shader_settings_title)
+            else -> getString(R.string.category_video)
         }
     }
 }

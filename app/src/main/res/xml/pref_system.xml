@@ -16,6 +16,18 @@
             android:fragment="me.magnum.melonds.ui.settings.fragments.CustomFirmwarePreferencesFragment" />
 
     <SwitchPreference
+            android:key="sync_rtc_on_resume"
+            android:title="@string/sync_rtc_on_resume"
+            android:summary="@string/sync_rtc_on_resume_summary"
+            app:iconSpaceReserved="false"
+            android:defaultValue="true" />
+
+    <Preference
+            android:key="rtc_offset_minutes"
+            android:title="@string/emulated_clock"
+            app:iconSpaceReserved="false" />
+
+    <SwitchPreference
             android:key="enable_jit"
             android:title="@string/enable_jit"
             android:summary="@string/enable_jit_summary"

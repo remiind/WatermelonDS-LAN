@@ -1,0 +1,6 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="64dp" android:height="64dp" android:viewportWidth="64" android:viewportHeight="64">
+    <path android:fillColor="@color/face_button_fill" android:pathData="M32,1A31,31 0,1 1,32,63A31,31 0,1 1,32,1" />
+    <path android:fillColor="#FFFFFF" android:fillType="evenOdd"
+        android:pathData="M27,14L37,14L51,50L41,50L38,41L26,41L23,50L13,50ZM29,33L35,33L32,23Z" />
+</vector>

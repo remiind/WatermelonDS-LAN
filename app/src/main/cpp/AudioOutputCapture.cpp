@@ -1491,7 +1491,7 @@ std::string AudioOutputCapture::dumpToDirectory(const std::string& finalDirector
             "source_produced_before,source_produced_after,source_frames,accepted_source_prefix_frames,dropped_frames,dropped_packets,"
             "transport_accepted_before,transport_accepted_after,transport_removed,transport_real_drained,transport_discarded,transport_lineage_epoch,"
             "host_consumed,ticks_at_consumption,frames_at_consumption,physical_level_before_write,physical_level_post_write,logical_level_before_write,logical_level_post_write,"
-            "continuity_epoch,reset_requested_epoch,reset_confirmed_epoch,hint_seen_epoch,candidate_generation,owner_generation,controller_ratio,desired_skew,source_applied_skew,applied_skew,"
+            "continuity_epoch,reset_requested_epoch,reset_confirmed_epoch,hint_seen_epoch,candidate_generation,owner_generation,controller_ratio,desired_skew,source_applied_skew,time_stretch_input_frames,time_stretch_output_frames,blip_rate_skew,applied_skew,"
             "sustained_provisional_phase_active,sustained_provisional_phase_candidate_generation,sustained_provisional_phase_owner_generation,"
             "sustained_provisional_phase_parent_ratio,sustained_provisional_phase_skew,sustained_provisional_phase_frontier_frames,sustained_provisional_phase_backing_frames,"
             "sustained_provisional_phase_publication_reserve_frames,sustained_provisional_phase_reserved_publication_count,"
@@ -1540,6 +1540,9 @@ std::string AudioOutputCapture::dumpToDirectory(const std::string& finalDirector
                 << value.controllerRatio << ','
                 << value.desiredSkew << ','
                 << value.sourceAppliedSkew << ','
+                << value.timeStretchInputFrames << ','
+                << value.timeStretchOutputFrames << ','
+                << value.blipRateSkew << ','
                 << value.appliedSkew << ','
                 << (value.sustainedProvisionalPhaseActive ? 1 : 0) << ','
                 << value.sustainedProvisionalPhaseCandidateGeneration << ','

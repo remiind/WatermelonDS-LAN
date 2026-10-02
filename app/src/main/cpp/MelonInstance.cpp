@@ -1427,7 +1427,8 @@ FrameQueuePolicy constrainGraphicsFrameQueuePolicy(
 FrameQueuePolicy applyFaithfulRealtimeSubmissionPipeline(
     FrameQueuePolicy policy,
     bool hasPresentationSurface,
-    bool fastForwardActive)
+    bool fastForwardActive,
+    bool lowLatencyEnabled)
 {
     if (!hasPresentationSurface || fastForwardActive)
         return policy;
@@ -1440,7 +1441,7 @@ FrameQueuePolicy applyFaithfulRealtimeSubmissionPipeline(
     policy.PreserveBacklogOnPresent = true;
     policy.ExpandPreservedBacklogToQueueCapacity = false;
     policy.ReclaimDeferredRealtimeFrameAfterTimeout = false;
-    policy.BlockRenderWhenBacklogged = false;
+    policy.BlockRenderWhenBacklogged = lowLatencyEnabled;
     policy.BlockEnqueueWhenBacklogged = true;
     return policy;
 }
@@ -1534,6 +1535,8 @@ bool CopyCompositedFrameToScreenshot(
 MelonInstance::MelonInstance(int instanceId, std::shared_ptr<EmulatorConfiguration> configuration, std::unique_ptr<melonDS::NDSArgs> args, std::shared_ptr<Net> net, std::unique_ptr<ScreenshotRenderer> screenshotRenderer, int consoleType) :
     instanceId(instanceId),
     currentConfiguration(configuration),
+    lowLatencyEnabled(configuration->lowLatencyEnabled),
+    frameQueue(lowLatencyEnabled),
     net(net),
     lastCompletedVulkanFrame(nullptr),
     lastCompletedVulkanScale(1),
@@ -1567,7 +1570,8 @@ MelonInstance::MelonInstance(int instanceId, std::shared_ptr<EmulatorConfigurati
     {
         std::filesystem::path firmwarePath = MelonDSAndroid::internalFilesDir;
         firmwarePath /= "wfcsettings.bin";
-        firmwareSave = std::make_unique<SaveManager>(firmwarePath);
+        firmwareSave = std::make_unique<SaveManager>(configuration->wfcSettingsPath.empty()
+            ? firmwarePath.string() : configuration->wfcSettingsPath);
     }
     else
     {
@@ -3111,8 +3115,16 @@ void MelonInstance::configurarFrameskip(int modo, int manualN) noexcept
     }
 }
 
+void MelonInstance::requestRtcSync()
+{
+    rtcSyncRequested.store(true, std::memory_order_release);
+}
+
 u32 MelonInstance::runFrame(bool frameskipSolicitado)
 {
+    if (rtcSyncRequested.load(std::memory_order_acquire)
+        && rtcSyncRequested.exchange(false, std::memory_order_acq_rel))
+        setDateTime();
     if (currentRenderer == Renderer::Vulkan)
         joinPendingFrameTail();
     asyncFrameTailEnabled = MelonDSAndroid::isVulkanAsyncFrameTailEnabled();
@@ -3144,6 +3156,11 @@ u32 MelonInstance::runFrame(bool frameskipSolicitado)
         isRenderConfigurationDirty = false;
     }
     const bool fastForwardActive = isFastForwardActive();
+    const bool prioritizeCurrentPresentation = lowLatencyEnabled
+        && currentRenderer == Renderer::Vulkan
+        && !asyncFrameTailEnabled && !fastForwardActive
+        && vulkanSurfaceMaxPacked.load(std::memory_order_relaxed) != 0u
+        && VulkanContext::Get().SupportsTimelineSemaphores();
     if (currentRenderer == Renderer::Vulkan)
         updateVulkanRenderScale(fastForwardActive, decidirNivelDrs(fastForwardActive));
 
@@ -3289,7 +3306,8 @@ u32 MelonInstance::runFrame(bool frameskipSolicitado)
         frameQueuePolicy = applyFaithfulRealtimeSubmissionPipeline(
             frameQueuePolicy,
             vulkanSurfaceMaxPacked.load(std::memory_order_relaxed) != 0u,
-            fastForwardActive);
+            fastForwardActive,
+            lowLatencyEnabled);
     }
     recordSetupPhase(vulkanSetupPolicyCpuWindow);
 
@@ -3471,7 +3489,8 @@ u32 MelonInstance::runFrame(bool frameskipSolicitado)
                     }
                 }
                 const bool usePreRunSnapshot =
-                    vulkanStructuredCaptureGateFrames > 0
+                    (prioritizeCurrentPresentation && !frameQueuePolicy.AllowDropForDeadline)
+                    || vulkanStructuredCaptureGateFrames > 0
                     || (!snapPosRun && streamingReciente
                         && currentConfiguration != nullptr);
                 sFielSnapPreHecho = usePreRunSnapshot;
@@ -3587,8 +3606,26 @@ u32 MelonInstance::runFrame(bool frameskipSolicitado)
         vulkanPreSubidaCpuWindow.Add(preSubidaFinNs - ndsRunStartNs);
         ndsRunStartNs = preSubidaFinNs;
     }
+    VulkanRenderer3D* deferredRenderer = nullptr;
+    if (prioritizeCurrentPresentation && !frameQueuePolicy.AllowDropForDeadline
+        && vulkanOutput != nullptr && sFielSnapPreHecho
+        && vulkanOutput->frameHasOwnRenderer3dSnapshot(renderFrame))
+    {
+        auto& renderer3D = static_cast<VulkanRenderer3D&>(nds->GPU.GetRenderer3D());
+        if (renderer3D.SetFrameSubmissionDeferred(true))
+            deferredRenderer = &renderer3D;
+    }
+    auto deferredSubmissionScope = MakeScopeExit([&]() {
+        if (deferredRenderer != nullptr)
+            (void)deferredRenderer->SetFrameSubmissionDeferred(false);
+    });
     processExactLiveGuideBeforeRunFrame();
     u32 nLines = nds->RunFrame();
+    if (lowLatencyEnabled && currentRenderer == Renderer::Vulkan)
+    {
+        if (auto* renderer2D = dynamic_cast<GPU2D::SoftRenderer*>(&nds->GPU.GetRenderer2D()))
+            renderer2D->PublishCompletedFaithfulFrame();
+    }
     vulkanFrameskipSaltosConsecutivos =
         vulkanFrameskipEsteFotograma ? vulkanFrameskipSaltosConsecutivos + 1 : 0;
     const std::int64_t exactGuideCompletedFrame =
@@ -3695,6 +3732,40 @@ u32 MelonInstance::runFrame(bool frameskipSolicitado)
         shouldCaptureRewindState = frameTail.shouldCaptureRewindState;
     }
 
+    if (deferredRenderer != nullptr)
+    {
+        VkSemaphore presentationDependency = VK_NULL_HANDLE;
+        u64 presentationValue = 0;
+        std::unique_lock<std::mutex> dependencyLock;
+        if (!fastForwardActive && !frameQueuePolicy.AllowDropForDeadline
+            && hasValidFrame && lastCompletedVulkanFrame == renderFrame
+            && deferredRenderer->HasDeferredFrameSubmission())
+        {
+            const bool committed = frameQueue.waitForPresentationCommit(
+                renderFrame->frameId, framePublicationGeneration,
+                frameQueue.capturePresentationWaitEpoch(), kVulkanExactRealtimeGpuWaitBudgetNs);
+            if (committed)
+            {
+                dependencyLock = acquireVulkanPresentationOperation();
+                if (vulkanSurfacePresenter != nullptr)
+                    vulkanSurfacePresenter->getFrameConsumptionDependency(
+                        renderFrame, presentationDependency, presentationValue);
+            }
+
+        }
+        auto* renderer3D = deferredRenderer;
+        deferredRenderer = nullptr;
+        const bool submitted = renderer3D->SetFrameSubmissionDeferred(false,
+            presentationDependency, presentationValue);
+        if (dependencyLock.owns_lock())
+            dependencyLock.unlock();
+        if (!submitted)
+        {
+            handleVulkanRuntimeFailure("deferred 3D submission");
+            return 0;
+        }
+    }
+
     if (currentRenderer == Renderer::Vulkan && areRendererDebugToolsEnabled()) [[unlikely]]
     {
 
@@ -3720,7 +3791,10 @@ u32 MelonInstance::runFrame(bool frameskipSolicitado)
     if (screenshotRenderer->isScreenshotPending()) [[unlikely]]
     {
         if (currentRenderer == Renderer::Vulkan)
-            (void)updateVulkanScreenshot(hasValidFrame ? tailFrame : lastCompletedVulkanFrame, hasValidFrame ? std::max(vulkanRenderScale, 1) : lastCompletedVulkanScale, true);
+        {
+            const bool captured = updateVulkanScreenshot(hasValidFrame ? tailFrame : lastCompletedVulkanFrame, hasValidFrame ? std::max(vulkanRenderScale, 1) : lastCompletedVulkanScale, true);
+            screenshotRenderer->notifyScreenshotReady(captured);
+        }
         else
             screenshotRenderer->renderScreenshot(&nds->GPU, currentRenderer, renderFrame);
     }
@@ -4211,6 +4285,12 @@ void MelonInstance::setAudioOutputSpeedHint(double speed)
     nds->SPU.SetOutputSpeedHint(speed);
 }
 
+void MelonInstance::configureAudioOutputTransport(std::uint32_t frames)
+{
+    nds->SPU.EnableOutputTimeStretch();
+    nds->SPU.SetOutputLatencyFrames(frames);
+}
+
 void MelonInstance::resetAudioOutputAdaptivo()
 {
     nds->SPU.DrainAndResetOutputAdaptivo();
@@ -4219,6 +4299,13 @@ void MelonInstance::resetAudioOutputAdaptivo()
 bool MelonInstance::takeScreenshot()
 {
     return screenshotRenderer->takeScreenshot();
+}
+
+std::vector<u32> MelonInstance::getScreenshotPixels()
+{
+    joinPendingFrameTail();
+    const u32* pixels = screenshotRenderer->getScreenshot();
+    return {pixels, pixels + 256u * 384u};
 }
 
 void MelonInstance::loadCheats(std::list<Cheat> cheats)
@@ -4301,7 +4388,7 @@ int MelonInstance::attachVulkanSurface(ANativeWindow* window, u32 width, u32 hei
     {
         auto presentationOperationLock = acquireVulkanPresentationOperation();
         if (!vulkanSurfacePresenter)
-            vulkanSurfacePresenter = std::make_unique<VulkanSurfacePresenter>();
+            vulkanSurfacePresenter = std::make_unique<VulkanSurfacePresenter>(lowLatencyEnabled);
 
         if (!vulkanSurfacePresenter->init())
         {
@@ -4409,7 +4496,8 @@ VulkanPresentationResult MelonInstance::presentVulkanFrame(
     frameQueuePolicy = applyFaithfulRealtimeSubmissionPipeline(
         frameQueuePolicy,
         true,
-        fastForwardActive);
+        fastForwardActive,
+        lowLatencyEnabled);
     const bool realtimeGraphicsPresenterBudget =
         useRealtimeGraphicsPresenterBudget(
             fastForwardActive, graphicsHardwareActive);
@@ -5623,6 +5711,14 @@ std::vector<u32> MelonInstance::captureCurrent3dCaptureFrameForDebug()
     }
 
     auto& renderer3DBase = nds->GPU.GetRenderer3D();
+    if (currentRenderer == Renderer::Software)
+    {
+        auto pixels = static_cast<SoftRenderer&>(renderer3DBase).CaptureColorTargetForDebug();
+        for (u32& pixel : pixels)
+            pixel |= 0xFF000000u;
+        return pixels;
+    }
+
     const auto captureLines = [&renderer3DBase]() -> std::vector<u32> {
         renderer3DBase.PrepareCaptureFrame();
         std::vector<u32> pixels(static_cast<size_t>(kScreenshotScreenWidth) * static_cast<size_t>(kScreenshotScreenHeight));
@@ -6900,7 +6996,10 @@ void MelonInstance::updateConfiguration(std::shared_ptr<EmulatorConfiguration> n
 
     rewindManager.UpdateRewindSettings(newConfiguration->rewindEnabled, newConfiguration->rewindLengthSeconds, newConfiguration->rewindCaptureSpacingSeconds);
 
+    const bool rtcOffsetChanged = currentConfiguration->rtcOffsetMinutes != newConfiguration->rtcOffsetMinutes;
     currentConfiguration = newConfiguration;
+    if (rtcOffsetChanged)
+        requestRtcSync();
     isRenderConfigurationDirty = true;
 }
 
@@ -7251,7 +7350,7 @@ void MelonInstance::updateRenderer()
         if (newRenderer == Renderer::Vulkan)
         {
             if (!vulkanOutput)
-                vulkanOutput = std::make_unique<VulkanOutput>();
+                vulkanOutput = std::make_unique<VulkanOutput>(lowLatencyEnabled);
 
             if (!vulkanOutput->isInitialized() && !vulkanOutput->init())
             {
@@ -7447,10 +7546,10 @@ void MelonInstance::setDateTime()
         }
     }
 
-    std::time_t t = std::time(0);
-    std::tm* now = std::localtime(&t);
-
-    nds->RTC.SetDateTime(now->tm_year + 1900, now->tm_mon + 1, now->tm_mday, now->tm_hour, now->tm_min, now->tm_sec);
+    std::time_t t = std::time(0) + static_cast<std::time_t>(currentConfiguration->rtcOffsetMinutes) * 60;
+    std::tm now{};
+    if (localtime_r(&t, &now) != nullptr)
+        nds->RTC.SetDateTime(now.tm_year + 1900, now.tm_mon + 1, now.tm_mday, now.tm_hour, now.tm_min, now.tm_sec);
 }
 
 bool MelonInstance::updateVulkanScreenshot(Frame* frame, int scale, bool clearOnFailure)

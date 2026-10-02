@@ -142,7 +142,7 @@ struct Frame {
 class FrameQueue
 {
 public:
-    FrameQueue();
+    explicit FrameQueue(bool lowLatencyEnabled = false);
     u64 capturePublicationGeneration();
     bool isPublicationGenerationCurrent(u64 expectedPublicationGeneration);
     Frame* getRenderFrame(const FrameQueuePolicy& policy, u64 expectedPublicationGeneration);
@@ -164,6 +164,7 @@ public:
     FrameQueuePresentationWaitResult waitForPresentProduct(
         u64 expectedWaitEpoch,
         u64 timeoutNs);
+    bool waitForPresentationCommit(u64 frameId, u64 generation, u64 waitEpoch, u64 timeoutNs);
     void cancelPresentationWaits() noexcept;
     void clear();
     FrameQueueStats takeStatsSnapshotAndReset();
@@ -188,6 +189,7 @@ private:
     void recordDroppedFrameLocked(Frame* frame, PresentDropCause cause, u64 nowNs);
 
 private:
+    const bool lowLatencyEnabled;
     std::mutex frameLock;
     std::condition_variable presentFrameReadyCondition;
     std::condition_variable freeFrameReadyCondition;
@@ -199,6 +201,8 @@ private:
     bool suppressPreviousFrameReuse = false;
     bool publicationsSuspended = false;
     std::atomic<u64> presentationWaitEpoch{1};
+    u64 committedPresentationFrameId = 0;
+    u64 committedPresentationGeneration = 0;
     u64 nextFrameId = 1;
     u64 publicationGeneration = 1;
     FrameQueueStats stats{};

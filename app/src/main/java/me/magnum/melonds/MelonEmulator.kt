@@ -6,6 +6,7 @@ import android.view.Surface
 import me.magnum.melonds.common.camera.DSiCameraSource
 import me.magnum.melonds.domain.model.Cheat
 import me.magnum.melonds.domain.model.EmulatorConfiguration
+import me.magnum.melonds.domain.model.VideoRenderer
 import me.magnum.melonds.domain.model.Input
 import me.magnum.melonds.domain.model.retroachievements.RASimpleAchievement
 import me.magnum.melonds.domain.model.retroachievements.RASimpleLeaderboard
@@ -97,7 +98,24 @@ object MelonEmulator {
         }
     }
 
-    external fun setupEmulator(
+    @Volatile
+    var isLowLatencyEnabled: Boolean = false
+        private set
+
+    fun setupEmulator(
+        emulatorConfiguration: EmulatorConfiguration,
+        dsiCameraSource: DSiCameraSource?,
+        screenshotBuffer: ByteBuffer,
+    ) {
+        val configuration = emulatorConfiguration.copy(
+            lowLatencyEnabled = emulatorConfiguration.lowLatencyEnabled
+                && emulatorConfiguration.rendererConfiguration.renderer == VideoRenderer.VULKAN,
+        )
+        setupEmulatorInternal(configuration, dsiCameraSource, screenshotBuffer)
+        isLowLatencyEnabled = configuration.lowLatencyEnabled
+    }
+
+    private external fun setupEmulatorInternal(
         emulatorConfiguration: EmulatorConfiguration,
         dsiCameraSource: DSiCameraSource?,
         screenshotBuffer: ByteBuffer,
@@ -237,6 +255,8 @@ object MelonEmulator {
 
 	external fun resumeEmulation()
 
+    external fun requestRtcSync()
+
     external fun debugStepFrame(): Boolean
 
     external fun debugStepFrames(frames: Int): Boolean
@@ -285,9 +305,11 @@ object MelonEmulator {
 
     external fun setSlot2AnalogInput(x: Float, y: Float)
 
-    external fun takeScreenshot(): Boolean
+    external fun takeScreenshot(): IntArray?
 
     external fun setFastForwardEnabled(enabled: Boolean)
+
+    external fun isFastForwardEnabled(): Boolean
 
     external fun setFrameLimitSpeedMultiplier(multiplier: Float)
 

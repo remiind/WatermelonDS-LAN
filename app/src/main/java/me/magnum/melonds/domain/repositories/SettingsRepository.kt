@@ -28,6 +28,7 @@ interface SettingsRepository {
     fun observeVulkanDrsEnabled(): Flow<Boolean>
 
     fun isVulkanDrsActive(): Boolean
+    fun isRtcSyncOnResumeEnabled(): Boolean
     fun isRewindEnabled(): Boolean
     fun isSustainedPerformanceModeEnabled(): Boolean
     fun isAppLogFileEnabled(): Boolean
@@ -128,12 +129,14 @@ interface SettingsRepository {
     fun isAutoSaveStateOnExitEnabled(): Boolean
     fun isAutoLoadStateOnLaunchEnabled(): Boolean
     fun getSaveFileDirectory(): Uri?
+    fun getScreenshotDirectory(): Uri?
     fun getSaveFileDirectory(rom: Rom): Uri
     fun getSaveStateLocation(rom: Rom): SaveStateLocation
     fun getSaveStateDirectory(rom: Rom): Uri?
 
     fun getControllerConfiguration(): ControllerConfiguration
     fun observeControllerConfiguration(): StateFlow<ControllerConfiguration>
+    fun getLayoutCycleIds(): Set<UUID>?
     fun getSelectedLayoutId(): UUID
     fun getSoftInputBehaviour(): Flow<SoftInputBehaviour>
     fun isTouchHapticFeedbackEnabled(): Flow<Boolean>
