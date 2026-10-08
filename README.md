@@ -1,3 +1,78 @@
+# WatermelonDS-LAN (unofficial fork)
+
+> **This is an unofficial, experimental fork** of [WatermelonDS](https://github.com/SapphireRhodonite/WatermelonDS)
+> that adds LAN multiplayer (DS local wireless over Wi-Fi). It is **not affiliated with, endorsed by or supported by**
+> the WatermelonDS developer (SapphireRhodonite), the melonDS Android port (rafaelvcaetano), the melonDS team or
+> Nintendo. Please **do not report problems with this fork to any of the upstream projects** – open an issue here instead.
+
+## What this fork adds
+
+* **LAN multiplayer**: host or join a session from the ROM list menu (*⋮ → LAN multiplayer*), then start the same game
+  on every device. This uses melonDS' own LAN implementation (ENet), so local wireless features such as Pokémon trades
+  and battles in the Union Room can work between devices on the same Wi-Fi.
+* Sessions are found automatically (UDP broadcast, port 7063); joining by IP address is possible as a fallback.
+  Gameplay traffic uses UDP port 7064.
+* Test builds are published as the pre-release [`lan-latest`](../../releases/tag/lan-latest). They use the app id
+  `me.magnum.melondualds.nightly`, so they install **next to** a regular WatermelonDS without touching its data.
+
+Status: **experimental**. Keep backups of your save files before trading or battling.
+
+## Changes compared to upstream (GPLv3 §5a notice)
+
+Modified by remiind, starting 2026-10-08, based on upstream commit `bb26729` (2026-10-01):
+
+| File | Change |
+| --- | --- |
+| `app/CMakeLists.txt` | Enables melonDS' ENet-based LAN interface on Android and adds `MelonLan.cpp` |
+| `app/src/main/cpp/MelonDS.cpp` | Emulator loop drives the multiplayer interface through `MelonLan::loopProcess()` |
+| `app/src/main/cpp/MelonLan.cpp/.h` | New: JNI bridge for host / join / discovery / player list |
+| `app/src/main/java/me/magnum/melonds/lan/` | New: `MelonLan` bindings and `LanSession` (lobby poller, Wi-Fi multicast lock) |
+| `app/src/main/java/me/magnum/melonds/ui/lan/` | New: LAN lobby screen |
+| `app/src/main/java/me/magnum/melonds/ui/romlist/…` | Menu entry for the LAN lobby |
+| `app/src/main/AndroidManifest.xml` | Lobby activity and `CHANGE_WIFI_MULTICAST_STATE` permission |
+| `app/src/main/res/values*/strings_lan.xml` | English and German texts for the lobby |
+| `app/src/main/assets/licenses/enet.txt` | ENet license (now linked into the app) |
+| `.github/workflows/*` | Upstream workflows only run in the upstream repository; `lan-build.yaml` builds this fork |
+| `.github/lan/lan-test.keystore` | Throwaway signing key for test builds (see below) |
+
+The full history of every change is available in the git log of this repository.
+
+## License
+
+This fork is distributed under the **GNU General Public License v3.0**, like WatermelonDS, the melonDS Android port and
+melonDS (see [LICENSE](LICENSE)). The complete corresponding source code of every published build is this repository
+at the tagged commit, including its git submodules. Third-party components keep their own licenses, e.g.
+[ENet](https://github.com/lsalzman/enet) (MIT, copyright Lee Salzman), whose license is bundled with the app.
+
+All credit for the emulator itself goes to the authors listed under [Credits](#credits).
+
+## No games, BIOS or firmware included
+
+This project contains **no** Nintendo games, BIOS or firmware files and does not link to any. Use only dumps of games and
+firmware you own. "Nintendo DS", "Nintendo DSi" and "Pokémon" are trademarks of their respective owners and are used
+here only to describe compatibility.
+
+## Signing key of the test builds
+
+Test builds are signed with a key that is **deliberately public** (`.github/lan/lan-test.keystore`). It only exists so that
+newer test builds install over older ones. It does **not** prove who built an APK – only install builds you downloaded
+from this repository's releases page.
+
+## Use of AI
+
+The LAN multiplayer changes in this fork were written with substantial help from an AI coding assistant
+(Claude by Anthropic). Commits produced this way carry a `Co-Authored-By: Claude` trailer.
+The emulator core and everything inherited from upstream are unaffected by this note.
+
+## Funding links
+
+The "Sponsor" links of this repository are inherited from upstream and support the **original WatermelonDS developer**,
+not this fork.
+
+---
+
+*The original WatermelonDS README follows.*
+
 # WatermelonDS
 A Nintendo DS and DSi emulator for Android, built on top of [melonDS](https://melonds.kuribo64.net/) and the
 [melonDS Android port](https://github.com/rafaelvcaetano/melonDS-android) by rafaelvcaetano.
