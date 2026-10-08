@@ -29,7 +29,7 @@ Modified by remiind, starting 2026-10-08, based on upstream commit `bb26729` (20
 | `app/src/main/java/me/magnum/melonds/lan/` | New: `MelonLan` bindings and `LanSession` (lobby poller, Wi-Fi multicast lock) |
 | `app/src/main/java/me/magnum/melonds/ui/lan/` | New: LAN lobby screen |
 | `app/src/main/java/me/magnum/melonds/ui/romlist/…` | Menu entry for the LAN lobby |
-| `app/src/main/AndroidManifest.xml` | Lobby activity and `CHANGE_WIFI_MULTICAST_STATE` permission |
+| `app/src/main/AndroidManifest.xml` | Lobby activity, `CHANGE_WIFI_MULTICAST_STATE` and `WAKE_LOCK` permissions (Wi-Fi low-latency mode during sessions) |
 | `app/src/main/res/values*/strings_lan.xml` | English and German texts for the lobby |
 | `app/src/main/assets/licenses/enet.txt` | ENet license (now linked into the app) |
 | `.github/workflows/*` | Upstream workflows only run in the upstream repository; `lan-build.yaml` builds this fork |

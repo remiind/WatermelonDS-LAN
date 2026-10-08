@@ -2,6 +2,7 @@ package me.magnum.melonds.lan
 
 import android.content.Context
 import android.net.wifi.WifiManager
+import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -48,6 +49,7 @@ object LanSession {
 
     private var pollJob: Job? = null
     private var multicastLock: WifiManager.MulticastLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     val hasSession: Boolean
         get() = _state.value.mode == Mode.HOSTING || _state.value.mode == Mode.CLIENT
@@ -185,11 +187,33 @@ object LanSession {
                 Log.w(TAG, "Could not acquire multicast lock", e)
             }
         }
+
+        // Wi-Fi power saving buffers packets for 100+ ms, which is far longer than
+        // the DS wireless timing tolerates. Keep the radio in low-latency mode
+        // while a LAN session exists.
+        if (wifiLock?.isHeld != true) {
+            val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+            } else {
+                @Suppress("DEPRECATION")
+                WifiManager.WIFI_MODE_FULL_HIGH_PERF
+            }
+            wifiLock = wifiManager.createWifiLock(mode, "WatermelonDS-LAN").apply {
+                setReferenceCounted(false)
+                try {
+                    acquire()
+                } catch (e: SecurityException) {
+                    Log.w(TAG, "Could not acquire Wi-Fi lock", e)
+                }
+            }
+        }
     }
 
     private fun releaseMulticastLock() {
         multicastLock?.let { if (it.isHeld) it.release() }
         multicastLock = null
+        wifiLock?.let { if (it.isHeld) it.release() }
+        wifiLock = null
     }
 
     // Stable keys, mapped to localized text in the UI.
