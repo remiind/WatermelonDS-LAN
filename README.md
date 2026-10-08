@@ -23,7 +23,7 @@ Modified by remiind, starting 2026-10-08, based on upstream commit `bb26729` (20
 
 | File | Change |
 | --- | --- |
-| `app/CMakeLists.txt` | Enables melonDS' ENet-based LAN interface on Android and adds `MelonLan.cpp` |
+| `app/CMakeLists.txt` | Enables melonDS' ENet-based LAN interface on Android, adds `MelonLan.cpp` and builds ENet with its packet throttling disabled (Wi-Fi jitter made it drop most DS wireless frames) |
 | `app/src/main/cpp/MelonDS.cpp` | Emulator loop drives the multiplayer interface through `MelonLan::loopProcess()` |
 | `app/src/main/cpp/MelonLan.cpp/.h` | New: JNI bridge for host / join / discovery / player list |
 | `app/src/main/java/me/magnum/melonds/lan/` | New: `MelonLan` bindings and `LanSession` (lobby poller, Wi-Fi multicast lock) |

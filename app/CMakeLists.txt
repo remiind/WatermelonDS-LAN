@@ -133,6 +133,28 @@ add_subdirectory("${ANDROID_CPP_DIR}/faad2" ./faad2)
 add_subdirectory("${ANDROID_CPP_DIR}/rcheevos" ./rcheevos)
 add_subdirectory("${ANDROID_CPP_DIR}/enet" ./enet)
 
+# WatermelonDS-LAN: ENet throttles unreliable packets whenever the round trip time
+# rises above its recent average, dropping a growing share of them (down to all).
+# Wi-Fi jitter triggers that constantly, and melonDS sends all DS wireless frames
+# unreliably, so connections stalled for minutes. Build ENet with a throttle
+# deceleration of 0, which keeps the throttle at 100 % (no intentional drops).
+# The submodule stays untouched; a patched copy of enet.h is used for ENet only.
+set(ENET_PATCHED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/enet-lan-include")
+file(READ "${ANDROID_CPP_DIR}/enet/include/enet/enet.h" ENET_HEADER)
+string(FIND "${ENET_HEADER}" "ENET_PEER_PACKET_THROTTLE_DECELERATION = 2," ENET_THROTTLE_POS)
+if (ENET_THROTTLE_POS EQUAL -1)
+    message(FATAL_ERROR "WatermelonDS-LAN: ENet throttle constant not found, update the patch")
+endif()
+string(REPLACE "ENET_PEER_PACKET_THROTTLE_DECELERATION = 2,"
+               "ENET_PEER_PACKET_THROTTLE_DECELERATION = 0, /* WatermelonDS-LAN */"
+               ENET_HEADER "${ENET_HEADER}")
+file(GLOB ENET_HEADERS RELATIVE "${ANDROID_CPP_DIR}/enet/include/enet" "${ANDROID_CPP_DIR}/enet/include/enet/*.h")
+foreach(header ${ENET_HEADERS})
+    configure_file("${ANDROID_CPP_DIR}/enet/include/enet/${header}" "${ENET_PATCHED_INCLUDE_DIR}/enet/${header}" COPYONLY)
+endforeach()
+file(WRITE "${ENET_PATCHED_INCLUDE_DIR}/enet/enet.h" "${ENET_HEADER}")
+target_include_directories(enet BEFORE PRIVATE "${ENET_PATCHED_INCLUDE_DIR}")
+
 set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
 set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 set(ZSTD_BUILD_COMPRESSION OFF CACHE BOOL "" FORCE)
