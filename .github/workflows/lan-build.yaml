@@ -29,8 +29,10 @@ jobs:
 
       - uses: actions/setup-java@v4
         with:
+          # gradle/gradle-daemon-jvm.properties asks for a JetBrains JDK 21; provide it
+          # directly so Gradle does not have to provision one from foojay.
           java-version: '21'
-          distribution: zulu
+          distribution: jetbrains
           cache: gradle
 
       # The runner image ships the Android SDK; only make sure the exact NDK,
@@ -54,7 +56,7 @@ jobs:
           echo "MELONDS_KEY_PASSWORD=lantest123" >> local.properties
           chmod +x ./gradlew
           set -o pipefail
-          ./gradlew :app:regenerateVulkanSpirv :app:assembleGitHubNightlyRelease --stacktrace 2>&1 | tee build.log
+          ./gradlew -Porg.gradle.java.installations.fromEnv=JAVA_HOME :app:regenerateVulkanSpirv :app:assembleGitHubNightlyRelease --stacktrace 2>&1 | tee build.log
           mkdir -p out
           cp app/build/outputs/apk/gitHubNightly/release/app-gitHub-nightly-release.apk out/WatermelonDS-LAN.apk
 
