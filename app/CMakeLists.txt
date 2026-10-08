@@ -147,6 +147,8 @@ set(ZSTD_MULTITHREAD_SUPPORT OFF CACHE BOOL "" FORCE)
 add_subdirectory("${ANDROID_CPP_DIR}/zstd/build/cmake" ./zstd)
 target_include_directories(enet INTERFACE "${ANDROID_CPP_DIR}/enet/include")
 list(APPEND CMAKE_MODULE_PATH "${CORE_LIB_DIR}/cmake")
+# WatermelonDS-LAN: build melonDS' LAN multiplayer (ENet) on Android too.
+set(MELONDS_ENABLE_ENET ON CACHE BOOL "Build ENet LAN/netplay support" FORCE)
 add_subdirectory("${CORE_LIB_DIR}/src/net" ./net-utils)
 
 add_library(
@@ -172,6 +174,7 @@ add_library(
         "${ANDROID_CPP_DIR}/MelonDSAudio.cpp"
         "${ANDROID_CPP_DIR}/MelonDSNandJNI.cpp"
         "${ANDROID_CPP_DIR}/MelonInstance.cpp"
+        "${ANDROID_CPP_DIR}/MelonLan.cpp"
         "${ANDROID_CPP_DIR}/MicInputOboeCallback.cpp"
         "${ANDROID_CPP_DIR}/NativeGlContext.cpp"
         "${ANDROID_CPP_DIR}/OboeCallback.cpp"

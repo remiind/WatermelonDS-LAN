@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="lan_menu">LAN multiplayer</string>
+    <string name="lan_title">LAN multiplayer</string>
+    <string name="lan_player_name">Player name</string>
+    <string name="lan_working">Working…</string>
+    <string name="lan_host_title">Host a game</string>
+    <string name="lan_max_players">Max. players</string>
+    <string name="lan_host">Host session</string>
+    <string name="lan_join_title">Join a game</string>
+    <string name="lan_searching">Searching for sessions on this Wi-Fi…</string>
+    <string name="lan_manual_address">Host IP address</string>
+    <string name="lan_join_address">Join by IP address</string>
+    <string name="lan_hosting">Hosting session</string>
+    <string name="lan_connected">Connected to session</string>
+    <string name="lan_session_hint">Go back and start the same game on every device. The session stays active until you leave it here. Avoid fast-forward while playing together.</string>
+    <string name="lan_leave">Leave session</string>
+    <string name="lan_footer">All devices must be on the same Wi-Fi. Compatible with melonDS LAN on PC when both use the same protocol version.</string>
+    <string name="lan_status_open">Open</string>
+    <string name="lan_status_playing">Playing</string>
+    <string name="lan_player_you">You</string>
+    <string name="lan_player_host">Host</string>
+    <string name="lan_player_connected">Connected</string>
+    <string name="lan_player_connecting">Connecting…</string>
+    <string name="lan_player_lost">Connection lost</string>
+    <string name="lan_error_game_running">Close the running game first.</string>
+    <string name="lan_error_discovery">Could not start session search (UDP port 7063 in use?).</string>
+    <string name="lan_error_host">Could not host a session (UDP port 7064 in use?).</string>
+    <string name="lan_error_join">Could not connect to the host.</string>
+</resources>

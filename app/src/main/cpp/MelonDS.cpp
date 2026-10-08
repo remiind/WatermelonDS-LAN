@@ -25,6 +25,7 @@
 #include "RewindManager.h"
 #include "ROMManager.h"
 #include "MPInterface.h"
+#include "MelonLan.h"
 #include "AndroidCameraHandler.h"
 #include "renderer/ScreenshotRenderer.h"
 #include "renderer/FrameQueue.h"
@@ -808,7 +809,8 @@ namespace MelonDSAndroid
 
     u32 loop(bool frameskipSolicitado, int frameskipModo, int frameskipManualN, bool drsActivo, bool drsDeuda)
     {
-        MPInterface::Get().Process();
+        // WatermelonDS-LAN: serialized with the lobby poller, see MelonLan.h
+        MelonLan::loopProcess();
         if (currentConfiguration != nullptr && currentConfiguration->renderer != Renderer::Vulkan)
             setupOpenGlContext();
         instance->configurarFrameskip(frameskipModo, frameskipManualN);

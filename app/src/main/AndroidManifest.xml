@@ -8,6 +8,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -149,6 +150,11 @@
             android:theme="@style/EmulatorTheme"
             android:label="@string/layout_editor"
             android:configChanges="keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|keyboard|uiMode" >
+        </activity>
+        <activity
+            android:name=".ui.lan.LanMultiplayerActivity"
+            android:label="@string/lan_title"
+            android:exported="false">
         </activity>
         <activity
             android:name=".ui.backgrounds.BackgroundsActivity"

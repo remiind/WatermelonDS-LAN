@@ -9,6 +9,7 @@ on:
 
 jobs:
   github-release:
+    if: github.repository == 'SapphireRhodonite/WatermelonDS'
     runs-on: ubuntu-latest
 
     steps:
@@ -76,6 +77,7 @@ jobs:
             app/build/outputs/native-debug-symbols/gitHubProdRelease/native-debug-symbols.zip
 
   playstore-release:
+    if: github.repository == 'SapphireRhodonite/WatermelonDS'
     runs-on: ubuntu-latest
 
     steps:

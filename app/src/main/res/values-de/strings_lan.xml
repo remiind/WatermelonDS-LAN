@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="lan_menu">LAN-Multiplayer</string>
+    <string name="lan_title">LAN-Multiplayer</string>
+    <string name="lan_player_name">Spielername</string>
+    <string name="lan_working">Bitte warten…</string>
+    <string name="lan_host_title">Spiel hosten</string>
+    <string name="lan_max_players">Max. Spieler</string>
+    <string name="lan_host">Session hosten</string>
+    <string name="lan_join_title">Spiel beitreten</string>
+    <string name="lan_searching">Suche nach Sessions in diesem WLAN…</string>
+    <string name="lan_manual_address">IP-Adresse des Hosts</string>
+    <string name="lan_join_address">Per IP-Adresse beitreten</string>
+    <string name="lan_hosting">Du hostest eine Session</string>
+    <string name="lan_connected">Mit Session verbunden</string>
+    <string name="lan_session_hint">Geh zurück und starte auf allen Geräten dasselbe Spiel. Die Session bleibt aktiv, bis du sie hier verlässt. Während des gemeinsamen Spielens kein Fast Forward nutzen.</string>
+    <string name="lan_leave">Session verlassen</string>
+    <string name="lan_footer">Alle Geräte müssen im selben WLAN sein. Kompatibel mit melonDS-LAN am PC, wenn beide dieselbe Protokollversion nutzen.</string>
+    <string name="lan_status_open">Offen</string>
+    <string name="lan_status_playing">Spielt</string>
+    <string name="lan_player_you">Du</string>
+    <string name="lan_player_host">Host</string>
+    <string name="lan_player_connected">Verbunden</string>
+    <string name="lan_player_connecting">Verbinde…</string>
+    <string name="lan_player_lost">Verbindung verloren</string>
+    <string name="lan_error_game_running">Beende zuerst das laufende Spiel.</string>
+    <string name="lan_error_discovery">Session-Suche konnte nicht starten (UDP-Port 7063 belegt?).</string>
+    <string name="lan_error_host">Session konnte nicht gehostet werden (UDP-Port 7064 belegt?).</string>
+    <string name="lan_error_join">Verbindung zum Host fehlgeschlagen.</string>
+</resources>

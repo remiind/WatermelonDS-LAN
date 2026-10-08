@@ -1,0 +1,70 @@
+name: WatermelonDS-LAN Build
+
+# Builds an optimized APK of the LAN fork on every push and publishes it as the
+# pre-release "lan-latest", so it can be downloaded directly on the handheld.
+# The app id gets the ".nightly" suffix, so it installs next to a regular
+# WatermelonDS without touching its data.
+
+on:
+  push:
+    branches: [ '**' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lan-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.repository != 'SapphireRhodonite/WatermelonDS'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: zulu
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build APK
+        run: |
+          COMMIT=$(git rev-parse --short HEAD)
+          sed -i -e 's/\(versionName = "\)\(.*\)\("\)/\1\2 LAN ('"$COMMIT"')\3/g' buildSrc/src/main/kotlin/AppConfig.kt
+          # Throwaway test key committed to this fork (see README). It only keeps
+          # updates installable over each other; it protects nothing.
+          echo "MELONDS_KEYSTORE=$GITHUB_WORKSPACE/.github/lan/lan-test.keystore" >> local.properties
+          echo "MELONDS_KEYSTORE_PASSWORD=lantest123" >> local.properties
+          echo "MELONDS_KEY_ALIAS=lantest" >> local.properties
+          echo "MELONDS_KEY_PASSWORD=lantest123" >> local.properties
+          chmod +x ./gradlew
+          ./gradlew :app:regenerateVulkanSpirv :app:assembleGitHubNightlyRelease --stacktrace
+          mkdir -p out
+          cp app/build/outputs/apk/gitHubNightly/release/app-gitHub-nightly-release.apk out/WatermelonDS-LAN.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WatermelonDS-LAN-apk
+          path: out/WatermelonDS-LAN.apk
+
+      - name: Publish pre-release
+        if: github.ref == 'refs/heads/Develop'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git tag -f lan-latest
+          git push -f origin refs/tags/lan-latest
+          gh release delete lan-latest --yes || true
+          gh release create lan-latest out/WatermelonDS-LAN.apk \
+            --prerelease \
+            --title "WatermelonDS-LAN (latest test build)" \
+            --notes "Unofficial test build with LAN multiplayer. Commit: $(git rev-parse --short HEAD). Installs next to the regular WatermelonDS (app id suffix .nightly)."

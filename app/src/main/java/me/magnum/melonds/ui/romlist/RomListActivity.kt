@@ -45,6 +45,7 @@ import me.magnum.melonds.domain.model.rom.config.RomIconSource
 import me.magnum.melonds.ui.common.rom.EmulatorLaunchValidatorDelegate
 import me.magnum.melonds.ui.dsiwaremanager.DSiWareManagerActivity
 import me.magnum.melonds.ui.emulator.EmulatorActivity
+import me.magnum.melonds.ui.lan.LanMultiplayerActivity
 import me.magnum.melonds.ui.settings.SettingsActivity
 import javax.inject.Inject
 
@@ -332,6 +333,10 @@ class RomListActivity : AppCompatActivity() {
     internal fun openDsiWareManager() {
         val intent = Intent(this, DSiWareManagerActivity::class.java)
         startActivity(intent)
+    }
+
+    internal fun openLanMultiplayer() {
+        startActivity(LanMultiplayerActivity.getIntent(this))
     }
 
     internal fun openSettings() {

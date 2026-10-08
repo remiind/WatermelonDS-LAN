@@ -135,6 +135,7 @@ class RomListFragment : Fragment() {
                         onBootFirmwareDs = { (activity as? RomListActivity)?.bootFirmware(me.magnum.melonds.domain.model.ConsoleType.DS) },
                         onBootFirmwareDsi = { (activity as? RomListActivity)?.bootFirmware(me.magnum.melonds.domain.model.ConsoleType.DSi) },
                         onOpenDsiWareManager = { (activity as? RomListActivity)?.openDsiWareManager() },
+                        onOpenLanMultiplayer = { (activity as? RomListActivity)?.openLanMultiplayer() },
                         onOpenSettings = { (activity as? RomListActivity)?.openSettings() },
                         onRomVisible = { rom -> romListViewModel.requestBoxArt(rom) },
                         onFocusedRomChanged = { rom ->

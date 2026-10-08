@@ -90,6 +90,7 @@ fun WatermelonLibraryHeader(
     onBootFirmwareDs: () -> Unit,
     onBootFirmwareDsi: () -> Unit,
     onOpenDsiWareManager: () -> Unit,
+    onOpenLanMultiplayer: () -> Unit,
     onRefresh: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
@@ -195,6 +196,9 @@ fun WatermelonLibraryHeader(
                         }
                         DropdownMenuItem(onClick = { overflowOpen = false; onOpenDsiWareManager() }) {
                             Text(stringResource(R.string.dsiware_manager))
+                        }
+                        DropdownMenuItem(onClick = { overflowOpen = false; onOpenLanMultiplayer() }) {
+                            Text(stringResource(R.string.lan_menu))
                         }
                         DropdownMenuItem(onClick = { overflowOpen = false; onRefresh() }) {
                             Text(stringResource(R.string.action_refresh_rom_list))
