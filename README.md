@@ -14,6 +14,8 @@
   Gameplay traffic uses UDP port 7064.
 * Test builds are published as the pre-release [`lan-latest`](../../releases/tag/lan-latest). They use the app id
   `me.magnum.melondualds.nightly`, so they install **next to** a regular WatermelonDS without touching its data.
+  The build workflow additionally produces a variant with the upstream app id for the maintainer's own use with
+  launcher frontends. It is only kept as a short-lived workflow artifact and is **not** a release.
 
 Status: **experimental**. Keep backups of your save files before trading or battling.
 

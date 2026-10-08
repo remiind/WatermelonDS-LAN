@@ -56,9 +56,11 @@ jobs:
           echo "MELONDS_KEY_PASSWORD=lantest123" >> local.properties
           chmod +x ./gradlew
           set -o pipefail
-          ./gradlew -Porg.gradle.java.installations.fromEnv=JAVA_HOME :app:regenerateVulkanSpirv :app:assembleGitHubNightlyRelease --stacktrace 2>&1 | tee build.log
+          ./gradlew -Porg.gradle.java.installations.fromEnv=JAVA_HOME :app:regenerateVulkanSpirv :app:assembleGitHubNightlyRelease :app:assembleGitHubProdRelease --stacktrace 2>&1 | tee build.log
           mkdir -p out
           cp app/build/outputs/apk/gitHubNightly/release/app-gitHub-nightly-release.apk out/WatermelonDS-LAN.apk
+          mkdir -p out-personal
+          cp app/build/outputs/apk/gitHubProd/release/app-gitHub-prod-release.apk out-personal/WatermelonDS-LAN-original-app-id.apk
 
       # Surface the relevant part of a failed build as annotations, which can be
       # read through the GitHub API without downloading the full log.
@@ -89,6 +91,16 @@ jobs:
         with:
           name: WatermelonDS-LAN-apk
           path: out/WatermelonDS-LAN.apk
+
+      # Personal variant with the upstream app id (me.magnum.melondualds), so
+      # frontends that only know WatermelonDS can launch it. It requires
+      # uninstalling the official app first (different signature). Deliberately
+      # NOT published as a release, to avoid confusion with the official app.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WatermelonDS-LAN-original-app-id
+          path: out-personal/WatermelonDS-LAN-original-app-id.apk
+          retention-days: 7
 
       - name: Publish pre-release
         if: github.ref == 'refs/heads/Develop'
