@@ -53,9 +53,35 @@ jobs:
           echo "MELONDS_KEY_ALIAS=lantest" >> local.properties
           echo "MELONDS_KEY_PASSWORD=lantest123" >> local.properties
           chmod +x ./gradlew
-          ./gradlew :app:regenerateVulkanSpirv :app:assembleGitHubNightlyRelease --stacktrace
+          set -o pipefail
+          ./gradlew :app:regenerateVulkanSpirv :app:assembleGitHubNightlyRelease --stacktrace 2>&1 | tee build.log
           mkdir -p out
           cp app/build/outputs/apk/gitHubNightly/release/app-gitHub-nightly-release.apk out/WatermelonDS-LAN.apk
+
+      # Surface the relevant part of a failed build as annotations, which can be
+      # read through the GitHub API without downloading the full log.
+      - name: Report build errors
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import re
+          lines = open("build.log", errors="replace").read().splitlines()
+          keys = re.compile(r"(error:|error |e: |FAILED|What went wrong|Exception|undefined reference|fatal)", re.I)
+          hits = [i for i, l in enumerate(lines) if keys.search(l)]
+          blocks, used = [], set()
+          for i in hits:
+              if i in used:
+                  continue
+              chunk = lines[max(0, i - 2): i + 6]
+              used.update(range(max(0, i - 2), i + 6))
+              blocks.append("\n".join(chunk))
+              if len(blocks) >= 9:
+                  break
+          blocks.append("\n".join(lines[-40:]))
+          for b in blocks:
+              msg = b[:3500].replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+              print(f"::error title=build::{msg}")
+          PY
 
       - uses: actions/upload-artifact@v4
         with:
