@@ -12,6 +12,11 @@
   and battles in the Union Room can work between devices on the same Wi-Fi.
 * Sessions are found automatically (UDP broadcast, port 7063); joining by IP address is possible as a fallback.
   Gameplay traffic uses UDP port 7064.
+* **PokéCounter bridge** (optional companion): while Pokémon HeartGold or SoulSilver runs, every wild encounter
+  (species, level, gender, shiny, PID) is sent as a small JSON datagram over UDP port 4210 to a
+  PokéCounter desk display (ESP32) on the same network. It is only active for HGSS cartridges,
+  finds the display via `pokecounter.local` or UDP broadcast and does nothing else. RAM layout taken from
+  [pokebot-nds](https://github.com/wyanido/pokebot-nds) (MIT).
 * Test builds are published as the pre-release [`lan-latest`](../../releases/tag/lan-latest). They use the app id
   `me.magnum.melondualds.nightly`, so they install **next to** a regular WatermelonDS without touching its data.
   The build workflow additionally produces a variant with the upstream app id for the maintainer's own use with
@@ -25,9 +30,11 @@ Modified by remiind, starting 2026-10-08, based on upstream commit `bb26729` (20
 
 | File | Change |
 | --- | --- |
-| `app/CMakeLists.txt` | Enables melonDS' ENet-based LAN interface on Android, adds `MelonLan.cpp` and builds ENet with its packet throttling disabled (Wi-Fi jitter made it drop most DS wireless frames) |
+| `app/CMakeLists.txt` | Enables melonDS' ENet-based LAN interface on Android, adds `MelonLan.cpp` and `PokeCounter.cpp` and builds ENet with its packet throttling disabled (Wi-Fi jitter made it drop most DS wireless frames) |
 | `app/src/main/cpp/MelonDS.cpp` | Emulator loop drives the multiplayer interface through `MelonLan::loopProcess()` |
 | `app/src/main/cpp/MelonLan.cpp/.h` | New: JNI bridge for host / join / discovery / player list |
+| `app/src/main/cpp/PokeCounter.cpp/.h` | New: reports wild HGSS encounters to a PokéCounter display (UDP 4210) |
+| `app/src/main/cpp/MelonInstance.cpp` | Calls `PokeCounter::onFrame()` after every emulated frame |
 | `app/src/main/java/me/magnum/melonds/lan/` | New: `MelonLan` bindings and `LanSession` (lobby poller, Wi-Fi multicast lock) |
 | `app/src/main/java/me/magnum/melonds/ui/lan/` | New: LAN lobby screen |
 | `app/src/main/java/me/magnum/melonds/ui/romlist/…` | Menu entry for the LAN lobby |

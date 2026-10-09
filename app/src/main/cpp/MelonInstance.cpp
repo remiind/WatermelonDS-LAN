@@ -28,6 +28,7 @@
 #include "MelonInstance.h"
 #include "ndz/NdzRomLoader.h"
 #include "NDS.h"
+#include "PokeCounter.h"
 #include "NDSCart.h"
 #include "VulkanContext.h"
 #include "net/Net_Slirp.h"
@@ -3621,6 +3622,8 @@ u32 MelonInstance::runFrame(bool frameskipSolicitado)
     });
     processExactLiveGuideBeforeRunFrame();
     u32 nLines = nds->RunFrame();
+    // WatermelonDS-LAN: report wild HGSS encounters to the PokéCounter display
+    PokeCounter::onFrame(*nds);
     if (lowLatencyEnabled && currentRenderer == Renderer::Vulkan)
     {
         if (auto* renderer2D = dynamic_cast<GPU2D::SoftRenderer*>(&nds->GPU.GetRenderer2D()))

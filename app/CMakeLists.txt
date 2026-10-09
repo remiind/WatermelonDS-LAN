@@ -197,6 +197,7 @@ add_library(
         "${ANDROID_CPP_DIR}/MelonDSNandJNI.cpp"
         "${ANDROID_CPP_DIR}/MelonInstance.cpp"
         "${ANDROID_CPP_DIR}/MelonLan.cpp"
+        "${ANDROID_CPP_DIR}/PokeCounter.cpp"
         "${ANDROID_CPP_DIR}/MicInputOboeCallback.cpp"
         "${ANDROID_CPP_DIR}/NativeGlContext.cpp"
         "${ANDROID_CPP_DIR}/OboeCallback.cpp"
