@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <random>
 #include <string>
 #include <thread>
 
@@ -83,6 +84,10 @@ struct State
 };
 
 State g;
+
+// Set from any thread when a savestate (or rewind state) was loaded
+std::atomic<bool> gStateLoaded{false};
+std::mt19937 gRng{std::random_device{}()};
 
 // ---------------------------------------------------------------------------
 // PK4 decoding
@@ -281,8 +286,8 @@ void report(const DecodedMon& m)
     char json[160];
     const char gender = m.gender == 0 ? 'M' : (m.gender == 1 ? 'F' : 'N');
     std::snprintf(json, sizeof(json),
-                  "{\"t\":\"enc\",\"sp\":%u,\"lv\":%u,\"g\":\"%c\",\"shiny\":%s,\"pid\":%u,\"src\":\"%s\"}",
-                  m.species, m.level, gender, m.shiny ? "true" : "false", m.pid, g.gameCode);
+                  "{\"t\":\"enc\",\"sp\":%u,\"lv\":%u,\"g\":\"%c\",\"shiny\":%s,\"pid\":%u,\"eid\":%u,\"src\":\"%s\"}",
+                  m.species, m.level, gender, m.shiny ? "true" : "false", m.pid, (unsigned)gRng(), g.gameCode);
     PC_LOG("wild encounter: %s", json);
     if (g.queue.size() > 16)
         g.queue.pop_front();
@@ -329,6 +334,17 @@ void processFrame(ReadFn read, void* ctx)
 {
     g.frame++;
     pumpNetwork();
+
+    // After loading a savestate the same battle can start again (e.g. a
+    // static encounter right after the state). Forget the current battle so
+    // it is reported again.
+    if (gStateLoaded.exchange(false))
+    {
+        if (g.inBattle)
+            PC_LOG("savestate loaded, battle tracking reset");
+        g.inBattle = false;
+        g.handled = false;
+    }
     if (!g.supported || (g.frame & 1))
         return;
 
@@ -387,6 +403,11 @@ void processFrame(ReadFn read, void* ctx)
         else
             PC_LOG("foe #%u lv%u is a trainer's Pokemon, not counted", foes[i].species, foes[i].level);
     }
+}
+
+void onStateLoaded()
+{
+    gStateLoaded.store(true);
 }
 
 void resetState()

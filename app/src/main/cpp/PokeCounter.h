@@ -11,6 +11,9 @@
 //  * Called from the emulator thread once per emulated frame; does no
 //    blocking I/O there (non-blocking UDP socket, name lookup on a helper
 //    thread).
+//  * Every report carries a random event id ("eid") so the display can
+//    drop UDP retries without merging identical encounters (a static
+//    encounter after a savestate has the same PID every time).
 //  * The display is found via "pokecounter.local" or, if that does not
 //    resolve, via UDP broadcast. The first reply pins its IP address.
 //
@@ -27,6 +30,9 @@ namespace PokeCounter
 
 // Called by the emulator thread after every emulated frame.
 void onFrame(melonDS::NDS& nds);
+
+// Called after a savestate or rewind state was loaded (any thread).
+void onStateLoaded();
 
 // ---- exposed for unit tests ------------------------------------------------
 
