@@ -47,6 +47,9 @@ struct DecodedMon
     uint8_t level = 0;
     uint8_t gender = 2;   // 0 = male, 1 = female, 2 = genderless
     bool shiny = false;
+    uint32_t ivs = 0;     // packed: HP | Atk<<5 | Def<<10 | Spe<<15 | SpA<<20 | SpD<<25
+    uint16_t item = 0;    // held item (Gen 4 item index)
+    uint8_t ability = 0;  // ability id
 };
 
 // Decrypts a 236-byte Gen 4 party structure at addr. Returns false if the

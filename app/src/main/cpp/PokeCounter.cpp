@@ -168,6 +168,9 @@ bool decodePartyMon(ReadFn read, void* ctx, uint32_t addr, DecodedMon& out)
     out.otSid = (uint16_t)(at(0x0E) | (at(0x0F) << 8));
     out.gender = (uint8_t)((at(0x40) >> 1) & 0x03);
     out.level = stats[0x8C - 0x88];
+    out.item = (uint16_t)(at(0x0A) | (at(0x0B) << 8));
+    out.ability = at(0x15);
+    out.ivs = (uint32_t)(at(0x38) | (at(0x39) << 8) | (at(0x3A) << 16) | ((uint32_t)at(0x3B) << 24)) & 0x3FFFFFFFu;
     const uint16_t sv = (uint16_t)(out.otId ^ out.otSid ^ (pid >> 16) ^ (pid & 0xFFFF));
     out.shiny = sv < 8;
 
@@ -283,11 +286,13 @@ void pumpNetwork()
 
 void report(const DecodedMon& m)
 {
-    char json[160];
+    char json[224];
     const char gender = m.gender == 0 ? 'M' : (m.gender == 1 ? 'F' : 'N');
     std::snprintf(json, sizeof(json),
-                  "{\"t\":\"enc\",\"sp\":%u,\"lv\":%u,\"g\":\"%c\",\"shiny\":%s,\"pid\":%u,\"eid\":%u,\"src\":\"%s\"}",
-                  m.species, m.level, gender, m.shiny ? "true" : "false", m.pid, (unsigned)gRng(), g.gameCode);
+                  "{\"t\":\"enc\",\"sp\":%u,\"lv\":%u,\"g\":\"%c\",\"shiny\":%s,\"pid\":%u,\"eid\":%u,"
+                  "\"ivs\":%u,\"ab\":%u,\"it\":%u,\"src\":\"%s\"}",
+                  m.species, m.level, gender, m.shiny ? "true" : "false", m.pid, (unsigned)gRng(),
+                  (unsigned)m.ivs, m.ability, m.item, g.gameCode);
     PC_LOG("wild encounter: %s", json);
     if (g.queue.size() > 16)
         g.queue.pop_front();
