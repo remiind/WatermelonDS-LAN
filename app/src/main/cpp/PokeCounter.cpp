@@ -39,13 +39,28 @@ constexpr uint16_t kPort = 4210;
 constexpr const char* kHostName = "pokecounter.local";
 constexpr int kMonSize = 236;
 
-// --- HGSS RAM layout (US version; other languages are shifted) --------------
-constexpr uint32_t kAnchorPtr       = 0x021D4158;   // -> "anchor"
-constexpr uint32_t kBattleIndicator = 0x021E76D2;   // u8, 0x41 / 0x97 / 0xC0 while in battle
-constexpr uint32_t kFoeAnchorOff    = 0x6930;       // anchor + off -> foe anchor
-constexpr uint32_t kFoeCountOff     = 0xC14;        // foe anchor + off: u8 foe count
-constexpr uint32_t kFoeDataOff      = 0xC18;        // foe anchor + off: party structs
-constexpr uint32_t kTrainerIdOff    = 0x23F64;      // anchor - off: u16 TID, u16 SID
+// --- RAM layouts per game (English addresses; other languages are shifted) --
+// Values from pokebot-nds (methods/hgss.lua, pt.lua, gen_iv.lua, detect_game.lua).
+struct GameLayout
+{
+    const char* prefix;         // first 3 chars of the game code
+    const char* name;
+    uint32_t anchorPtr;         // u32 at (this + lang offset) -> "anchor"
+    int32_t  foeAnchorOff;      // u32 at (anchor + this) -> "foe anchor"
+    int32_t  foeCountOff;       // foe anchor + this: u8 foe count
+    int32_t  foeDataOff;        // foe anchor + this: 236-byte party structs
+    uint32_t battleIndicator;   // u8 at (this + lang offset): 0x41 / 0x97 / 0xC0 in battle
+    int32_t  trainerIdOff;      // anchor + this: u16 TID, u16 SID
+    int32_t  lang[6];           // offsets for E, D, F, I, S, J
+};
+
+constexpr GameLayout kGames[] = {
+    {"IPK", "HeartGold",  0x021D4158, 0x6930,  0xC14,   0xC18,   0x021E76D2, -0x23F64, {0, -0x20, 0x20, -0x60, 0x20, -0x3B08}},
+    {"IPG", "SoulSilver", 0x021D4158, 0x6930,  0xC14,   0xC18,   0x021E76D2, -0x23F64, {0, -0x20, 0x20, -0x60, 0x40, -0x3B08}},
+    {"CPU", "Platinum",   0x021C0794, 0x217A8, -0x2D5C, -0x2D58, 0x021D18F2, 0x8C,     {0, 0x1A0, 0x1E0, 0x160, 0x200, -0xC00}},
+    {"ADA", "Diamond",    0x021C489C, 0x226FE, -0x2B74, -0x2B70, 0x021A1B2A, -0x12,    {0, 0x140, 0x180, 0xE0, 0x1A0, 0x1860}},
+    {"APA", "Pearl",      0x021C489C, 0x226FE, -0x2B74, -0x2B70, 0x021A1B2A, -0x12,    {0, 0x140, 0x180, 0xE0, 0x1A0, 0x1860}},
+};
 
 // Wait this long (frames) for valid foe data after a battle started
 constexpr int kFoeTimeoutFrames = 600;
@@ -65,6 +80,7 @@ struct State
     // game
     const void* cart = nullptr;
     bool supported = false;
+    const GameLayout* game = nullptr;
     int32_t offset = 0;
     char gameCode[5] = {0};
 
@@ -118,7 +134,15 @@ bool isMainRam(uint32_t a) { return (a & 0xFF000000u) == 0x02000000u; }
 
 } // namespace
 
+static bool decodeImpl(ReadFn read, void* ctx, uint32_t addr, DecodedMon& out, bool raw);
+
 bool decodePartyMon(ReadFn read, void* ctx, uint32_t addr, DecodedMon& out)
+{
+    // Normally encrypted; some Platinum static encounters keep the data unencrypted
+    return decodeImpl(read, ctx, addr, out, false) || decodeImpl(read, ctx, addr, out, true);
+}
+
+static bool decodeImpl(ReadFn read, void* ctx, uint32_t addr, DecodedMon& out, bool raw)
 {
     const uint32_t pid = rd32(read, ctx, addr);
     const uint16_t checksum = rd16(read, ctx, addr + 6);
@@ -133,7 +157,7 @@ bool decodePartyMon(ReadFn read, void* ctx, uint32_t addr, DecodedMon& out)
         for (int i = 0; i < 32; i += 2)
         {
             seed = lcrng(seed);
-            uint16_t w = rd16(read, ctx, addr + 0x08 + b * 32 + i) ^ (uint16_t)(seed >> 16);
+            uint16_t w = rd16(read, ctx, addr + 0x08 + b * 32 + i) ^ (raw ? 0 : (uint16_t)(seed >> 16));
             stored[b][i] = (uint8_t)w;
             stored[b][i + 1] = (uint8_t)(w >> 8);
         }
@@ -156,7 +180,7 @@ bool decodePartyMon(ReadFn read, void* ctx, uint32_t addr, DecodedMon& out)
     for (int i = 0; i < 8; i += 2)
     {
         seed = lcrng(seed);
-        uint16_t w = rd16(read, ctx, addr + 0x88 + i) ^ (uint16_t)(seed >> 16);
+        uint16_t w = rd16(read, ctx, addr + 0x88 + i) ^ (raw ? 0 : (uint16_t)(seed >> 16));
         stats[i] = (uint8_t)w;
         stats[i + 1] = (uint8_t)(w >> 8);
     }
@@ -306,20 +330,6 @@ void report(const DecodedMon& m)
 // Game detection
 // ---------------------------------------------------------------------------
 
-bool languageOffset(char version, char lang, int32_t& off)
-{
-    // pokebot-nds: offsets relative to the English release
-    switch (lang)
-    {
-        case 'E': off = 0; return true;
-        case 'D': off = -0x20; return true;
-        case 'F': off = 0x20; return true;
-        case 'I': off = -0x60; return true;
-        case 'S': off = version == 'G' ? 0x40 : 0x20; return true;   // SS / HG
-        case 'J': off = -0x3B08; return true;
-        default: return false;
-    }
-}
 
 uint8_t ramRead(void* ctx, uint32_t addr)
 {
@@ -353,7 +363,8 @@ void processFrame(ReadFn read, void* ctx)
     if (!g.supported || (g.frame & 1))
         return;
 
-    const uint8_t ind = read(ctx, kBattleIndicator + g.offset);
+    const GameLayout& L = *g.game;
+    const uint8_t ind = read(ctx, L.battleIndicator + g.offset);
     const bool battle = ind == 0x41 || ind == 0x97 || ind == 0xC0;
     if (!battle)
     {
@@ -379,26 +390,26 @@ void processFrame(ReadFn read, void* ctx)
         return;
     }
 
-    const uint32_t anchor = rd32(read, ctx, kAnchorPtr + g.offset);
+    const uint32_t anchor = rd32(read, ctx, L.anchorPtr + g.offset);
     if (!isMainRam(anchor))
         return;
-    const uint32_t foeAnchor = rd32(read, ctx, anchor + kFoeAnchorOff);
+    const uint32_t foeAnchor = rd32(read, ctx, anchor + L.foeAnchorOff);
     if (!isMainRam(foeAnchor))
         return;
-    const uint8_t count = read(ctx, foeAnchor + kFoeCountOff);
+    const uint8_t count = read(ctx, foeAnchor + L.foeCountOff);
     if (count == 0 || count > 6)
         return;
 
     DecodedMon foes[6];
     for (int i = 0; i < count; i++)
     {
-        if (!decodePartyMon(read, ctx, foeAnchor + kFoeDataOff + i * kMonSize, foes[i]))
+        if (!decodePartyMon(read, ctx, foeAnchor + L.foeDataOff + i * kMonSize, foes[i]))
             return;   // not written completely yet, retry next time
     }
     g.handled = true;
 
-    const uint16_t tid = rd16(read, ctx, anchor - kTrainerIdOff);
-    const uint16_t sid = rd16(read, ctx, anchor - kTrainerIdOff + 2);
+    const uint16_t tid = rd16(read, ctx, anchor + L.trainerIdOff);
+    const uint16_t sid = rd16(read, ctx, anchor + L.trainerIdOff + 2);
     for (int i = 0; i < count; i++)
     {
         // Wild Pokémon carry the player's trainer IDs, trainer Pokémon don't
@@ -427,8 +438,22 @@ void setGame(const char* code)
 {
     std::memcpy(g.gameCode, code, 4);
     g.gameCode[4] = 0;
-    g.supported = code[0] == 'I' && code[1] == 'P' && (code[2] == 'K' || code[2] == 'G')
-        && languageOffset(code[2], code[3], g.offset);
+    g.supported = false;
+    g.game = nullptr;
+    static const char kLangs[] = "EDFISJ";
+    const char* lp = std::strchr(kLangs, code[3]);
+    if (!lp || !code[3])
+        return;
+    for (const GameLayout& L : kGames)
+    {
+        if (std::strncmp(code, L.prefix, 3) == 0)
+        {
+            g.game = &L;
+            g.offset = L.lang[lp - kLangs];
+            g.supported = true;
+            return;
+        }
+    }
 }
 
 #ifndef POKECOUNTER_NO_MELONDS
@@ -447,7 +472,7 @@ void onFrame(melonDS::NDS& nds)
             setGame(hdr.GameCode);
             if (g.supported)
             {
-                PC_LOG("HGSS detected (%s, offset %d), encounter reporting active", g.gameCode, g.offset);
+                PC_LOG("%s detected (%s, offset %d), encounter reporting active", g.game->name, g.gameCode, (int)g.offset);
                 startLookup();
             }
         }

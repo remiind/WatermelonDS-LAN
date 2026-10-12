@@ -12,9 +12,9 @@
   and battles in the Union Room can work between devices on the same Wi-Fi.
 * Sessions are found automatically (UDP broadcast, port 7063); joining by IP address is possible as a fallback.
   Gameplay traffic uses UDP port 7064.
-* **PokéCounter bridge** (optional companion): while Pokémon HeartGold or SoulSilver runs, every wild encounter
+* **PokéCounter bridge** (optional companion): while Pokémon HeartGold, SoulSilver, Platinum, Diamond or Pearl runs, every wild encounter
   (species, level, gender, shiny, PID) is sent as a small JSON datagram over UDP port 4210 to a
-  PokéCounter desk display (ESP32) on the same network. It is only active for HGSS cartridges,
+  PokéCounter desk display (ESP32) on the same network. It is only active for these cartridges, sends the game code along (separate statistics per edition),
   finds the display via `pokecounter.local` or UDP broadcast and does nothing else. RAM layout taken from
   [pokebot-nds](https://github.com/wyanido/pokebot-nds) (MIT).
 * Test builds are published as the pre-release [`lan-latest`](../../releases/tag/lan-latest). They use the app id

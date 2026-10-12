@@ -3,11 +3,14 @@
 
 // WatermelonDS-LAN: PokéCounter bridge.
 //
-// Watches the emulated RAM of Pokémon HeartGold / SoulSilver for wild
+// Watches the emulated RAM of Pokémon HeartGold / SoulSilver, Platinum,
+// Diamond and Pearl for wild
 // battles and reports every wild encounter as a small JSON datagram (UDP,
 // port 4210) to a PokéCounter desk display on the local network.
 //
-//  * Only active while a HGSS cartridge (game code IPK* / IPG*) is running.
+//  * Only active while one of these cartridges (IPK*, IPG*, CPU*, ADA*, APA*)
+//    is running. The game code is sent along ("src") so the display can keep
+//    separate statistics per edition.
 //  * Called from the emulator thread once per emulated frame; does no
 //    blocking I/O there (non-blocking UDP socket, name lookup on a helper
 //    thread).
