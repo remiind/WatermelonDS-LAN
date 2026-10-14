@@ -933,6 +933,8 @@ class EmulatorActivity : AppCompatActivity() {
                         ToastEvent.GbaLoadFailed -> getString(R.string.error_load_gba_rom) to Toast.LENGTH_SHORT
                         ToastEvent.QuickSaveSuccessful -> getString(R.string.saved) to Toast.LENGTH_SHORT
                         ToastEvent.QuickLoadSuccessful -> getString(R.string.loaded) to Toast.LENGTH_SHORT
+                        ToastEvent.PokeCounterShinyPaused -> getString(R.string.pokecounter_shiny_paused) to Toast.LENGTH_LONG
+                        ToastEvent.PokeCounterShinyProtected -> getString(R.string.pokecounter_shiny_protected) to Toast.LENGTH_LONG
                         is ToastEvent.ScreenshotSaved -> getString(R.string.screenshot_saved, it.fileName) to Toast.LENGTH_SHORT
                         ToastEvent.ScreenshotFailed -> getString(R.string.screenshot_failed) to Toast.LENGTH_LONG
                         ToastEvent.RewindNotEnabled -> getString(R.string.rewind_not_enabled) to Toast.LENGTH_SHORT

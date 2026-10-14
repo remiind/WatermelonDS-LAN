@@ -29,6 +29,11 @@ enum class EmulatorEventType(val event: Int) {
      * * total steps (`i32`)
      */
     EventVulkanCompileProgress(104),
+    /**
+     * WatermelonDS-LAN: the PokéCounter tracker reported a shiny wild Pokémon and
+     * the emulation thread paused itself. No data.
+     */
+    EventPokeCounterShiny(105),
 
     /**
      * RA achievement primed. Data:

@@ -255,6 +255,13 @@ object MelonEmulator {
 
 	external fun resumeEmulation()
 
+    /**
+     * WatermelonDS-LAN: true while a freshly found shiny is protected (from the
+     * shiny auto-pause until the emulation is resumed). Reset and savestate
+     * loading are refused natively during that time.
+     */
+    external fun isShinyHoldActive(): Boolean
+
     external fun requestRtcSync()
 
     external fun debugStepFrame(): Boolean

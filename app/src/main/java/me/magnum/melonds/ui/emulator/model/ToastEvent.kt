@@ -12,6 +12,8 @@ sealed class ToastEvent {
     data object StateStateDoesNotExist : ToastEvent()
     data object QuickSaveSuccessful : ToastEvent()
     data object QuickLoadSuccessful : ToastEvent()
+    data object PokeCounterShinyPaused : ToastEvent()
+    data object PokeCounterShinyProtected : ToastEvent()
     data class ScreenshotSaved(val fileName: String) : ToastEvent()
     data object ScreenshotFailed : ToastEvent()
     data object CannotLoadSaveStatesWhenRAHardcoreIsEnabled : ToastEvent()

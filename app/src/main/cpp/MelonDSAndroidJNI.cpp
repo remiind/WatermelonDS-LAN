@@ -33,6 +33,7 @@
 #include "UriFileHandler.h"
 #include "JniEnvHandler.h"
 #include "AndroidMelonEventMessenger.h"
+#include "PokeCounter.h"
 #include "ExactLiveGuide.h"
 #include "MelonDSAndroidInterface.h"
 #include "MelonDSAndroidConfiguration.h"
@@ -941,6 +942,7 @@ static void registrarHiloEnHints()
 }
 
 namespace MelonDSAndroid { extern void (*hookRegistrarHiloHints)(); }
+namespace MelonDSAndroid { void fireEmulatorEvent(int type, int dataLength, void* data); }
 
 extern "C"
 {
@@ -2519,10 +2521,18 @@ Java_me_magnum_melonds_MelonEmulator_resumeEmulation(JNIEnv* env, jobject thiz)
         && !stop.load(std::memory_order_acquire)) {
         debugFrameStepsRemaining = 0;
         paused = false;
+        // WatermelonDS-LAN: resuming by hand ends the shiny protection
+        PokeCounter::releaseAllShinyHolds();
         MelonDSAndroid::resume();
         pthread_cond_broadcast(&emuThreadCond);
     }
     pthread_mutex_unlock(&emuThreadMutex);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_me_magnum_melonds_MelonEmulator_isShinyHoldActive(JNIEnv*, jobject)
+{
+    return PokeCounter::anyShinyHold() ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL
@@ -2595,6 +2605,9 @@ Java_me_magnum_melonds_MelonEmulator_resetEmulation(JNIEnv* env, jobject thiz) {
     std::lock_guard<std::mutex> lifecycleLock(emulatorLifecycleMutex);
     if (!emulatorResourcesActive)
         return;
+    // WatermelonDS-LAN: never reset away a freshly found shiny
+    if (PokeCounter::anyShinyHold())
+        return;
 
     pthread_mutex_lock(&emuThreadMutex);
     if (started.load(std::memory_order_acquire)
@@ -2650,6 +2663,8 @@ Java_me_magnum_melonds_MelonEmulator_loadStateInternal(JNIEnv* env, jobject thiz
     std::lock_guard<std::mutex> lifecycleLock(emulatorLifecycleMutex);
     if (!emulatorResourcesActive)
         return JNI_FALSE;
+    if (PokeCounter::anyShinyHold())
+        return JNI_FALSE;
 
     Java_me_magnum_melonds_MelonEmulator_pauseEmulation(env, thiz);
     if (!waitForEmulationThreadPaused())
@@ -2670,6 +2685,8 @@ JNIEXPORT jboolean JNICALL
 Java_me_magnum_melonds_MelonEmulator_loadRewindState(JNIEnv* env, jobject thiz, jobject rewindSaveState) {
     std::lock_guard<std::mutex> lifecycleLock(emulatorLifecycleMutex);
     if (!emulatorResourcesActive)
+        return JNI_FALSE;
+    if (PokeCounter::anyShinyHold())
         return JNI_FALSE;
 
     bool result = true;
@@ -3296,6 +3313,14 @@ void* emulate(void*)
                 pauseAfterCurrentFrame = debugFrameStepsRemaining == 0;
             }
             pthread_mutex_unlock(&emuThreadMutex);
+        }
+
+        // WatermelonDS-LAN: a shiny wild Pokémon was reported -> pause right
+        // here and let the UI show the pause menu (reset / loading blocked).
+        if (PokeCounter::takeAnyShinyEvent())
+        {
+            pauseAfterCurrentFrame = true;
+            MelonDSAndroid::fireEmulatorEvent(105, 0, nullptr);   // EVENT_POKECOUNTER_SHINY
         }
 
         auto frameDuration = std::chrono::steady_clock::now() - frameStart;

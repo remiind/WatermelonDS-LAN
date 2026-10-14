@@ -5,6 +5,8 @@ import me.magnum.melonds.domain.model.VideoRenderer
 sealed class EmulatorEvent {
     data class RumbleStart(val duration: Int) : EmulatorEvent()
     data object RumbleStop : EmulatorEvent()
+    /** WatermelonDS-LAN: shiny wild Pokémon found, emulation paused by the native side. */
+    data object PokeCounterShiny : EmulatorEvent()
     data class RendererInitFailed(val renderer: VideoRenderer) : EmulatorEvent()
     data class VulkanCompileProgress(
         val stageId: Int,

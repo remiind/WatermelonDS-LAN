@@ -1176,4 +1176,7 @@
     <string name="freedreno_name_fd_mesa_debug" translatable="false">FD_MESA_DEBUG</string>
     <string name="freedreno_restart_button">Restart</string>
     <string name="freedreno_save_failed">Could not save the setting. Tap Restart to try again.</string>
+    <!-- WatermelonDS-LAN: PokéCounter shiny auto-pause -->
+    <string name="pokecounter_shiny_paused" translatable="false">✨ Shiny! Emulation pausiert – Reset und Laden sind gesperrt, bis du fortsetzt.</string>
+    <string name="pokecounter_shiny_protected" translatable="false">✨ Shiny-Schutz: Reset und Laden erst nach dem Fortsetzen möglich.</string>
 </resources>

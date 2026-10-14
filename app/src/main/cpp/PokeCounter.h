@@ -47,6 +47,27 @@ void onStateLoaded(melonDS::NDS& nds);
 // Optional: called before an emulator instance is destroyed.
 void onInstanceGone(melonDS::NDS& nds);
 
+// ---- shiny auto-pause ------------------------------------------------------
+//
+// When a shiny wild Pokémon is reported, the instance's tracker raises
+//  * a one-shot "shiny event": the frontend pauses that instance, and
+//  * a "shiny hold": the frontend refuses reset and savestate loading for
+//    that instance until the user resumes it by hand.
+// Enabled by default; POKECOUNTER_AUTOPAUSE=0 switches it off.
+
+bool autoPauseEnabled();
+void setAutoPauseEnabled(bool on);
+
+// Emulator thread, right after onFrame(): true once per shiny.
+bool takeShinyEvent(melonDS::NDS& nds);
+bool shinyHold(melonDS::NDS& nds);
+void releaseShinyHold(melonDS::NDS& nds);
+
+// For frontends with a single emulator instance (Android).
+bool takeAnyShinyEvent();
+bool anyShinyHold();
+void releaseAllShinyHolds();
+
 // ---- exposed for unit tests ------------------------------------------------
 
 using ReadFn = uint8_t (*)(void* ctx, uint32_t addr);
@@ -80,6 +101,9 @@ void setGame(Tracker& t, const char* gameCode);
 void processFrame(Tracker& t, ReadFn read, void* ctx);
 void resetState(Tracker& t);
 void markStateLoaded(Tracker& t);
+bool takeShinyEvent(Tracker& t);
+bool shinyHold(Tracker& t);
+void releaseShinyHold(Tracker& t);
 
 }
 

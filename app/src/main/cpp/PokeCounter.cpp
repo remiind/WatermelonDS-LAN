@@ -138,6 +138,10 @@ struct Tracker
     // Set from any thread when a savestate (or rewind state) was loaded
     std::atomic<bool> stateLoaded{false};
 
+    // shiny auto-pause (see PokeCounter.h)
+    std::atomic<bool> shinyEvent{false};
+    std::atomic<bool> shinyHold{false};
+
     ~Tracker()
     {
         if (sock != kNoSock)
@@ -451,6 +455,12 @@ void report(Tracker& t, const DecodedMon& m)
                   // the shiny value (TID ^ SID ^ PID high ^ PID low, shiny below 8)
                   (unsigned)(m.otId ^ m.otSid), t.gameCode);
     PC_LOG("wild encounter: %s", json);
+    if (m.shiny && autoPauseEnabled())
+    {
+        t.shinyHold.store(true);
+        t.shinyEvent.store(true);
+        PC_LOG("shiny! pausing this instance, reset and savestate loading blocked until resumed");
+    }
     if (t.queue.size() > 16)
         t.queue.pop_front();
     Pending p;
@@ -588,6 +598,39 @@ void setGame(Tracker& t, const char* code)
     }
 }
 
+// ---- shiny auto-pause ---------------------------------------------------------
+
+namespace
+{
+std::atomic<int> gAutoPause{-1};   // -1 = not read from the environment yet
+}
+
+bool autoPauseEnabled()
+{
+    int v = gAutoPause.load();
+    if (v < 0)
+    {
+        const char* env = std::getenv("POKECOUNTER_AUTOPAUSE");
+        v = (env && (env[0] == '0' || env[0] == 'n' || env[0] == 'N' || env[0] == 'f' || env[0] == 'F'
+                     || ((env[0] == 'o' || env[0] == 'O') && (env[1] == 'f' || env[1] == 'F')))) ? 0 : 1;
+        gAutoPause.store(v);
+    }
+    return v != 0;
+}
+
+void setAutoPauseEnabled(bool on)
+{
+    gAutoPause.store(on ? 1 : 0);
+}
+
+bool takeShinyEvent(Tracker& t) { return t.shinyEvent.exchange(false); }
+bool shinyHold(Tracker& t) { return t.shinyHold.load(); }
+void releaseShinyHold(Tracker& t)
+{
+    t.shinyEvent.store(false);
+    t.shinyHold.store(false);
+}
+
 // ---- instance registry --------------------------------------------------------
 
 namespace
@@ -608,6 +651,37 @@ Tracker& trackerFor(const void* key)
 void onStateLoaded(melonDS::NDS& nds)
 {
     trackerFor(&nds).stateLoaded.store(true);
+}
+
+bool takeShinyEvent(melonDS::NDS& nds) { return takeShinyEvent(trackerFor(&nds)); }
+bool shinyHold(melonDS::NDS& nds) { return shinyHold(trackerFor(&nds)); }
+void releaseShinyHold(melonDS::NDS& nds) { releaseShinyHold(trackerFor(&nds)); }
+
+bool takeAnyShinyEvent()
+{
+    std::lock_guard<std::mutex> lk(gTrackersLock);
+    bool any = false;
+    for (auto& kv : gTrackers)
+        if (kv.second && kv.second->shinyEvent.exchange(false))
+            any = true;
+    return any;
+}
+
+bool anyShinyHold()
+{
+    std::lock_guard<std::mutex> lk(gTrackersLock);
+    for (auto& kv : gTrackers)
+        if (kv.second && kv.second->shinyHold.load())
+            return true;
+    return false;
+}
+
+void releaseAllShinyHolds()
+{
+    std::lock_guard<std::mutex> lk(gTrackersLock);
+    for (auto& kv : gTrackers)
+        if (kv.second)
+            releaseShinyHold(*kv.second);
 }
 
 void onInstanceGone(melonDS::NDS& nds)

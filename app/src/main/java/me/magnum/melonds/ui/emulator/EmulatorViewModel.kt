@@ -1780,7 +1780,19 @@ class EmulatorViewModel @Inject constructor(
         }
     }
 
+    /** WatermelonDS-LAN: refuse actions that would throw away a freshly found shiny. */
+    private fun isShinyProtected(): Boolean {
+        if (!_emulatorState.value.isRunning() || !MelonEmulator.isShinyHoldActive()) {
+            return false
+        }
+        _toastEvent.tryEmit(ToastEvent.PokeCounterShinyProtected)
+        return true
+    }
+
     fun resetEmulator() {
+        if (isShinyProtected()) {
+            return
+        }
         if (_emulatorState.value.isRunning()) {
             sessionCoroutineScope.launch {
                 leaderboardAttemptCoordinator.beginRuntimeReset()
@@ -2249,6 +2261,9 @@ class EmulatorViewModel @Inject constructor(
     }
 
     fun rewindToState(rewindSaveState: RewindSaveState) {
+        if (isShinyProtected()) {
+            return
+        }
         if (!emulatorSession.areSaveStateLoadsAllowed()) {
             _toastEvent.tryEmit(ToastEvent.RewindNotAvailableWhileRAHardcoreModeEnabled)
             return
@@ -2275,6 +2290,9 @@ class EmulatorViewModel @Inject constructor(
     }
 
     fun loadStateFromSlot(slot: SaveStateSlot) {
+        if (isShinyProtected()) {
+            return
+        }
         if (!emulatorSession.areSaveStateLoadsAllowed()) {
             _toastEvent.tryEmit(ToastEvent.CannotLoadSaveStatesWhenRAHardcoreIsEnabled)
             return
@@ -2317,6 +2335,9 @@ class EmulatorViewModel @Inject constructor(
     }
 
     fun doQuickLoad() {
+        if (isShinyProtected()) {
+            return
+        }
         val currentState = _emulatorState.value
         when (currentState) {
             is EmulatorState.RunningRom -> {
@@ -2804,6 +2825,12 @@ class EmulatorViewModel @Inject constructor(
                 when (it) {
                     is EmulatorEvent.RumbleStart -> _rumbleEvent.tryEmit(RumbleEvent.RumbleStart(it.duration))
                     EmulatorEvent.RumbleStop -> _rumbleEvent.tryEmit(RumbleEvent.RumbleStop)
+                    EmulatorEvent.PokeCounterShiny -> {
+                        // WatermelonDS-LAN: the native side already stopped after this frame;
+                        // show the pause menu so the UI state matches.
+                        _toastEvent.tryEmit(ToastEvent.PokeCounterShinyPaused)
+                        pauseEmulator(true)
+                    }
                     is EmulatorEvent.RendererInitFailed -> {
                         didReceiveRendererInitFailure = true
                         val failedRenderer = it.renderer
