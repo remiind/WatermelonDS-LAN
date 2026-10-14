@@ -141,6 +141,7 @@ struct Tracker
     // shiny auto-pause (see PokeCounter.h)
     std::atomic<bool> shinyEvent{false};
     std::atomic<bool> shinyHold{false};
+    uint64_t shinyAtMs = 0;   // when the shiny was reported
 
     ~Tracker()
     {
@@ -458,6 +459,7 @@ void report(Tracker& t, const DecodedMon& m)
     if (m.shiny && autoPauseEnabled())
     {
         t.shinyHold.store(true);
+        t.shinyAtMs = nowMs();
         t.shinyEvent.store(true);
         PC_LOG("shiny! pausing this instance, reset and savestate loading blocked until resumed");
     }
@@ -623,7 +625,19 @@ void setAutoPauseEnabled(bool on)
     gAutoPause.store(on ? 1 : 0);
 }
 
-bool takeShinyEvent(Tracker& t) { return t.shinyEvent.exchange(false); }
+// The pause waits until the display has confirmed the report (or 1.5 s have
+// passed): a paused emulator no longer sends, so the display would only learn
+// about the shiny - and play its melody - after resuming.
+constexpr uint64_t kShinyPauseWaitMs = 1500;
+
+bool takeShinyEvent(Tracker& t)
+{
+    if (!t.shinyEvent.load())
+        return false;
+    if (!t.queue.empty() && nowMs() - t.shinyAtMs < kShinyPauseWaitMs)
+        return false;
+    return t.shinyEvent.exchange(false);
+}
 bool shinyHold(Tracker& t) { return t.shinyHold.load(); }
 void releaseShinyHold(Tracker& t)
 {
@@ -662,7 +676,7 @@ bool takeAnyShinyEvent()
     std::lock_guard<std::mutex> lk(gTrackersLock);
     bool any = false;
     for (auto& kv : gTrackers)
-        if (kv.second && kv.second->shinyEvent.exchange(false))
+        if (kv.second && takeShinyEvent(*kv.second))
             any = true;
     return any;
 }

@@ -58,7 +58,8 @@ void onInstanceGone(melonDS::NDS& nds);
 bool autoPauseEnabled();
 void setAutoPauseEnabled(bool on);
 
-// Emulator thread, right after onFrame(): true once per shiny.
+// Emulator thread, right after onFrame(): true once per shiny, as soon as the
+// display confirmed the report (at most 1.5 s later), so it still hears about it.
 bool takeShinyEvent(melonDS::NDS& nds);
 bool shinyHold(melonDS::NDS& nds);
 void releaseShinyHold(melonDS::NDS& nds);
