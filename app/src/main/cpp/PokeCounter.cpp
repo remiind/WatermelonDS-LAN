@@ -444,9 +444,12 @@ void report(Tracker& t, const DecodedMon& m)
     const char gender = m.gender == 0 ? 'M' : (m.gender == 1 ? 'F' : 'N');
     std::snprintf(json, sizeof(json),
                   "{\"t\":\"enc\",\"sp\":%u,\"lv\":%u,\"g\":\"%c\",\"shiny\":%s,\"pid\":%u,\"eid\":%u,"
-                  "\"ivs\":%u,\"ab\":%u,\"it\":%u,\"src\":\"%s\"}",
+                  "\"ivs\":%u,\"ab\":%u,\"it\":%u,\"tsv\":%u,\"src\":\"%s\"}",
                   m.species, m.level, gender, m.shiny ? "true" : "false", m.pid, (unsigned)randomEid(),
-                  (unsigned)m.ivs, m.ability, m.item, t.gameCode);
+                  (unsigned)m.ivs, m.ability, m.item,
+                  // Wild Pokémon carry the player's IDs: TID ^ SID, so the display can show
+                  // the shiny value (TID ^ SID ^ PID high ^ PID low, shiny below 8)
+                  (unsigned)(m.otId ^ m.otSid), t.gameCode);
     PC_LOG("wild encounter: %s", json);
     if (t.queue.size() > 16)
         t.queue.pop_front();

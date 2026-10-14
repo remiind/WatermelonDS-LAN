@@ -17,6 +17,8 @@
 //  * Called from the emulator thread once per emulated frame; does no
 //    blocking I/O there (non-blocking UDP socket, name lookup on a helper
 //    thread).
+//  * Reports also carry "tsv" = TID ^ SID of the player, so the display
+//    can show each encounter's shiny value.
 //  * Every report carries a random event id ("eid") so the display can
 //    drop UDP retries without merging identical encounters (a static
 //    encounter after a savestate has the same PID every time).
