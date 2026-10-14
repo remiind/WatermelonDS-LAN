@@ -11,14 +11,19 @@
 //  * Only active while one of these cartridges (IPK*, IPG*, CPU*, ADA*, APA*)
 //    is running. The game code is sent along ("src") so the display can keep
 //    separate statistics per edition.
+//  * Every emulator instance (NDS object) gets its own tracker, so several
+//    instances in one process (desktop melonDS) each report their own
+//    encounters.
 //  * Called from the emulator thread once per emulated frame; does no
 //    blocking I/O there (non-blocking UDP socket, name lookup on a helper
 //    thread).
 //  * Every report carries a random event id ("eid") so the display can
 //    drop UDP retries without merging identical encounters (a static
 //    encounter after a savestate has the same PID every time).
-//  * The display is found via "pokecounter.local" or, if that does not
-//    resolve, via UDP broadcast. The first reply pins its IP address.
+//  * The display is found via the environment variable POKECOUNTER_HOST,
+//    "pokecounter.local" (system resolver, then a direct mDNS query) or,
+//    if that does not resolve, via UDP broadcast. The first reply pins its
+//    IP address.
 //
 // RAM layout (pointers and language offsets) taken from pokebot-nds by
 // wyanido (MIT License, https://github.com/wyanido/pokebot-nds).
@@ -35,7 +40,10 @@ namespace PokeCounter
 void onFrame(melonDS::NDS& nds);
 
 // Called after a savestate or rewind state was loaded (any thread).
-void onStateLoaded();
+void onStateLoaded(melonDS::NDS& nds);
+
+// Optional: called before an emulator instance is destroyed.
+void onInstanceGone(melonDS::NDS& nds);
 
 // ---- exposed for unit tests ------------------------------------------------
 
@@ -59,11 +67,17 @@ struct DecodedMon
 // checksum does not match (data not written yet or garbage).
 bool decodePartyMon(ReadFn read, void* ctx, uint32_t addr, DecodedMon& out);
 
+// Per-instance state (opaque outside PokeCounter.cpp)
+struct Tracker;
+Tracker* newTracker();
+void deleteTracker(Tracker* t);
+
 // Selects the game by its 4-character game code (e.g. "IPGD" = SoulSilver DE).
-void setGame(const char* gameCode);
+void setGame(Tracker& t, const char* gameCode);
 // One emulated frame of battle tracking, reading RAM through `read`.
-void processFrame(ReadFn read, void* ctx);
-void resetState();
+void processFrame(Tracker& t, ReadFn read, void* ctx);
+void resetState(Tracker& t);
+void markStateLoaded(Tracker& t);
 
 }
 

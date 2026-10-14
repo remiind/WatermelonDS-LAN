@@ -2,18 +2,45 @@
 
 #include "PokeCounter.h"
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#ifdef _MSC_VER
+#pragma comment(lib, "ws2_32.lib")
+#endif
+using SockT = SOCKET;
+static const SockT kNoSock = INVALID_SOCKET;
+static void closeSock(SockT s) { closesocket(s); }
+static void setNonBlocking(SockT s) { u_long one = 1; ioctlsocket(s, FIONBIO, &one); }
+#else
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+using SockT = int;
+static const SockT kNoSock = -1;
+static void closeSock(SockT s) { close(s); }
+static void setNonBlocking(SockT s) { fcntl(s, F_SETFL, fcntl(s, F_GETFL, 0) | O_NONBLOCK); }
+#endif
 
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <random>
 #include <string>
 #include <thread>
@@ -64,18 +91,28 @@ constexpr GameLayout kGames[] = {
 
 // Wait this long (frames) for valid foe data after a battle started
 constexpr int kFoeTimeoutFrames = 600;
-// UDP retry
-constexpr int kRetryFrames = 30;
-constexpr int kMaxTries = 6;
+// UDP retry (wall clock, so fast forward does not shorten it)
+constexpr int kRetryMs = 400;
+constexpr int kMaxTries = 8;
+
+uint64_t nowMs()
+{
+    using namespace std::chrono;
+    return (uint64_t)duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
 
 struct Pending
 {
     std::string json;
     int tries = 0;
-    uint64_t nextFrame = 0;
+    uint64_t nextMs = 0;
 };
 
-struct State
+} // namespace
+
+// One tracker per emulator instance (the desktop version runs several
+// instances in one process, each on its own thread).
+struct Tracker
 {
     // game
     const void* cart = nullptr;
@@ -90,20 +127,35 @@ struct State
     uint64_t battleStart = 0;
 
     // network
-    int sock = -1;
-    std::atomic<uint32_t> resolvedIp{0};   // network byte order, from DNS/mDNS
+    SockT sock = kNoSock;
+    std::shared_ptr<std::atomic<uint32_t>> resolvedIp = std::make_shared<std::atomic<uint32_t>>(0);   // network byte order
     uint32_t learnedIp = 0;                // from the first reply
     bool lookupStarted = false;
     std::deque<Pending> queue;
 
     uint64_t frame = 0;
+
+    // Set from any thread when a savestate (or rewind state) was loaded
+    std::atomic<bool> stateLoaded{false};
+
+    ~Tracker()
+    {
+        if (sock != kNoSock)
+            closeSock(sock);
+    }
 };
 
-State g;
+namespace
+{
 
-// Set from any thread when a savestate (or rewind state) was loaded
-std::atomic<bool> gStateLoaded{false};
 std::mt19937 gRng{std::random_device{}()};
+std::mutex gRngLock;
+
+uint32_t randomEid()
+{
+    std::lock_guard<std::mutex> lk(gRngLock);
+    return (uint32_t)gRng();
+}
 
 // ---------------------------------------------------------------------------
 // PK4 decoding
@@ -208,122 +260,200 @@ namespace
 // Network
 // ---------------------------------------------------------------------------
 
-void startLookup()
+bool netInit()
 {
-    if (g.lookupStarted)
+#ifdef _WIN32
+    static const bool ok = [] {
+        WSADATA wsa;
+        return WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
+    }();
+    return ok;
+#else
+    return true;
+#endif
+}
+
+// Asks for a ".local" name directly via multicast DNS (for systems whose
+// resolver does not do mDNS). Returns the address in network byte order or 0.
+uint32_t mdnsLookup(const char* name)
+{
+    uint8_t q[256] = {0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0};
+    size_t n = 12;
+    const char* p = name;
+    while (*p && n < 200)
+    {
+        const char* dot = std::strchr(p, '.');
+        size_t len = dot ? (size_t)(dot - p) : std::strlen(p);
+        q[n++] = (uint8_t)len;
+        std::memcpy(q + n, p, len);
+        n += len;
+        p += len + (dot ? 1 : 0);
+        if (!dot)
+            break;
+    }
+    const uint8_t tail[] = {0, 0, 1, 0x80, 1};   // root, type A, class IN + unicast reply
+    std::memcpy(q + n, tail, sizeof(tail));
+    n += sizeof(tail);
+
+    SockT s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s == kNoSock)
+        return 0;
+#ifdef _WIN32
+    DWORD tv = 1500;
+#else
+    timeval tv{1, 500000};
+#endif
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&tv), sizeof(tv));
+    sockaddr_in to{};
+    to.sin_family = AF_INET;
+    to.sin_port = htons(5353);
+    inet_pton(AF_INET, "224.0.0.251", &to.sin_addr);
+    uint32_t ip = 0;
+    if (sendto(s, reinterpret_cast<const char*>(q), (int)n, 0, reinterpret_cast<sockaddr*>(&to), sizeof(to)) > 0)
+    {
+        uint8_t buf[1500];
+        sockaddr_in from{};
+        socklen_t fl = sizeof(from);
+        int r = (int)recvfrom(s, reinterpret_cast<char*>(buf), sizeof(buf), 0, reinterpret_cast<sockaddr*>(&from), &fl);
+        // Response with an answer: use the sender (the display answers for itself)
+        if (r > 12 && (buf[2] & 0x80) && (buf[6] | buf[7]))
+            ip = from.sin_addr.s_addr;
+    }
+    closeSock(s);
+    return ip;
+}
+
+void startLookup(Tracker& t)
+{
+    if (t.lookupStarted)
         return;
-    g.lookupStarted = true;
-    std::thread([] {
+    t.lookupStarted = true;
+    auto out = t.resolvedIp;   // shared, survives the tracker
+    std::thread([out] {
+        // POKECOUNTER_HOST overrides the name (IP or host name)
+        const char* env = std::getenv("POKECOUNTER_HOST");
+        const char* host = env && *env ? env : kHostName;
+        uint32_t ip = 0;
         addrinfo hints{};
         hints.ai_family = AF_INET;
         hints.ai_socktype = SOCK_DGRAM;
         addrinfo* res = nullptr;
-        if (getaddrinfo(kHostName, nullptr, &hints, &res) == 0 && res)
+        if (getaddrinfo(host, nullptr, &hints, &res) == 0 && res)
         {
-            auto* sin = reinterpret_cast<sockaddr_in*>(res->ai_addr);
-            g.resolvedIp.store(sin->sin_addr.s_addr);
-            char buf[INET_ADDRSTRLEN];
-            inet_ntop(AF_INET, &sin->sin_addr, buf, sizeof(buf));
-            PC_LOG("%s -> %s", kHostName, buf);
+            ip = reinterpret_cast<sockaddr_in*>(res->ai_addr)->sin_addr.s_addr;
             freeaddrinfo(res);
+        }
+        if (!ip && std::strstr(host, ".local"))
+            ip = mdnsLookup(host);
+        if (ip)
+        {
+            out->store(ip);
+            char buf[INET_ADDRSTRLEN];
+            in_addr a{};
+            a.s_addr = ip;
+            inet_ntop(AF_INET, &a, buf, sizeof(buf));
+            PC_LOG("%s -> %s", host, buf);
         }
         else
         {
-            PC_LOG("%s not resolvable, using UDP broadcast", kHostName);
+            PC_LOG("%s not resolvable, using UDP broadcast", host);
         }
     }).detach();
 }
 
-bool ensureSocket()
+bool ensureSocket(Tracker& t)
 {
-    if (g.sock >= 0)
+    if (t.sock != kNoSock)
         return true;
-    g.sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (g.sock < 0)
+    if (!netInit())
+        return false;
+    t.sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (t.sock == kNoSock)
     {
         PC_LOG("socket() failed: %s", strerror(errno));
         return false;
     }
     int one = 1;
-    setsockopt(g.sock, SOL_SOCKET, SO_BROADCAST, &one, sizeof(one));
-    fcntl(g.sock, F_SETFL, fcntl(g.sock, F_GETFL, 0) | O_NONBLOCK);
+    setsockopt(t.sock, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char*>(&one), sizeof(one));
+    setNonBlocking(t.sock);
     return true;
 }
 
-void sendDatagram(const std::string& json)
+void sendDatagram(Tracker& t, const std::string& json)
 {
-    if (!ensureSocket())
+    if (!ensureSocket(t))
         return;
     sockaddr_in to{};
     to.sin_family = AF_INET;
     to.sin_port = htons(kPort);
-    if (g.learnedIp)
-        to.sin_addr.s_addr = g.learnedIp;
-    else if (g.resolvedIp.load())
-        to.sin_addr.s_addr = g.resolvedIp.load();
+    if (t.learnedIp)
+        to.sin_addr.s_addr = t.learnedIp;
+    else if (t.resolvedIp->load())
+        to.sin_addr.s_addr = t.resolvedIp->load();
     else
         to.sin_addr.s_addr = INADDR_BROADCAST;
-    sendto(g.sock, json.data(), json.size(), 0, reinterpret_cast<sockaddr*>(&to), sizeof(to));
+    sendto(t.sock, json.data(), (int)json.size(), 0, reinterpret_cast<sockaddr*>(&to), sizeof(to));
 }
 
-void pumpNetwork()
+void pumpNetwork(Tracker& t)
 {
     // Replies acknowledge the oldest pending message
-    if (g.sock >= 0)
+    if (t.sock != kNoSock)
     {
         char buf[512];
         sockaddr_in from{};
         socklen_t fromLen = sizeof(from);
-        ssize_t n;
-        while ((n = recvfrom(g.sock, buf, sizeof(buf) - 1, 0, reinterpret_cast<sockaddr*>(&from), &fromLen)) > 0)
+        int n;
+        while ((n = (int)recvfrom(t.sock, buf, sizeof(buf) - 1, 0, reinterpret_cast<sockaddr*>(&from), &fromLen)) > 0)
         {
             buf[n] = 0;
-            if (!g.learnedIp)
+            if (!t.learnedIp)
             {
                 char ip[INET_ADDRSTRLEN];
                 inet_ntop(AF_INET, &from.sin_addr, ip, sizeof(ip));
                 PC_LOG("display found at %s", ip);
             }
-            g.learnedIp = from.sin_addr.s_addr;
-            if (!g.queue.empty() && std::strstr(buf, "\"ok\"") != nullptr)
-                g.queue.pop_front();
+            t.learnedIp = from.sin_addr.s_addr;
+            if (!t.queue.empty() && std::strstr(buf, "\"ok\"") != nullptr)
+                t.queue.pop_front();
             fromLen = sizeof(from);
         }
     }
 
-    if (g.queue.empty())
+    if (t.queue.empty())
         return;
-    Pending& p = g.queue.front();
-    if (g.frame < p.nextFrame)
+    Pending& p = t.queue.front();
+    const uint64_t now = nowMs();
+    if (now < p.nextMs)
         return;
     if (p.tries >= kMaxTries)
     {
         PC_LOG("no reply from display, dropping: %s", p.json.c_str());
-        g.learnedIp = 0;   // fall back to lookup / broadcast
-        g.queue.pop_front();
+        t.learnedIp = 0;   // fall back to lookup / broadcast
+        t.queue.pop_front();
         return;
     }
-    sendDatagram(p.json);
+    sendDatagram(t, p.json);
     p.tries++;
-    p.nextFrame = g.frame + kRetryFrames;
+    p.nextMs = now + kRetryMs;
 }
 
-void report(const DecodedMon& m)
+void report(Tracker& t, const DecodedMon& m)
 {
     char json[224];
     const char gender = m.gender == 0 ? 'M' : (m.gender == 1 ? 'F' : 'N');
     std::snprintf(json, sizeof(json),
                   "{\"t\":\"enc\",\"sp\":%u,\"lv\":%u,\"g\":\"%c\",\"shiny\":%s,\"pid\":%u,\"eid\":%u,"
                   "\"ivs\":%u,\"ab\":%u,\"it\":%u,\"src\":\"%s\"}",
-                  m.species, m.level, gender, m.shiny ? "true" : "false", m.pid, (unsigned)gRng(),
-                  (unsigned)m.ivs, m.ability, m.item, g.gameCode);
+                  m.species, m.level, gender, m.shiny ? "true" : "false", m.pid, (unsigned)randomEid(),
+                  (unsigned)m.ivs, m.ability, m.item, t.gameCode);
     PC_LOG("wild encounter: %s", json);
-    if (g.queue.size() > 16)
-        g.queue.pop_front();
+    if (t.queue.size() > 16)
+        t.queue.pop_front();
     Pending p;
     p.json = json;
-    p.nextFrame = g.frame;
-    g.queue.push_back(std::move(p));
+    p.nextMs = 0;
+    t.queue.push_back(std::move(p));
 }
 
 // ---------------------------------------------------------------------------
@@ -345,52 +475,52 @@ uint8_t ramRead(void* ctx, uint32_t addr)
 } // namespace
 
 // Core per-frame logic, separated from melonDS for testing
-void processFrame(ReadFn read, void* ctx)
+void processFrame(Tracker& t, ReadFn read, void* ctx)
 {
-    g.frame++;
-    pumpNetwork();
+    t.frame++;
+    pumpNetwork(t);
 
-    // After loading a savestate the same battle can start again (e.g. a
+    // After loading a savestate the same battle can start again (e.t. a
     // static encounter right after the state). Forget the current battle so
     // it is reported again.
-    if (gStateLoaded.exchange(false))
+    if (t.stateLoaded.exchange(false))
     {
-        if (g.inBattle)
+        if (t.inBattle)
             PC_LOG("savestate loaded, battle tracking reset");
-        g.inBattle = false;
-        g.handled = false;
+        t.inBattle = false;
+        t.handled = false;
     }
-    if (!g.supported || (g.frame & 1))
+    if (!t.supported || (t.frame & 1))
         return;
 
-    const GameLayout& L = *g.game;
-    const uint8_t ind = read(ctx, L.battleIndicator + g.offset);
+    const GameLayout& L = *t.game;
+    const uint8_t ind = read(ctx, L.battleIndicator + t.offset);
     const bool battle = ind == 0x41 || ind == 0x97 || ind == 0xC0;
     if (!battle)
     {
-        if (g.inBattle)
+        if (t.inBattle)
             PC_LOG("battle ended");
-        g.inBattle = false;
-        g.handled = false;
+        t.inBattle = false;
+        t.handled = false;
         return;
     }
-    if (!g.inBattle)
+    if (!t.inBattle)
     {
-        g.inBattle = true;
-        g.handled = false;
-        g.battleStart = g.frame;
+        t.inBattle = true;
+        t.handled = false;
+        t.battleStart = t.frame;
         PC_LOG("battle started (indicator 0x%02X)", ind);
     }
-    if (g.handled)
+    if (t.handled)
         return;
-    if (g.frame - g.battleStart > kFoeTimeoutFrames)
+    if (t.frame - t.battleStart > kFoeTimeoutFrames)
     {
         PC_LOG("no valid foe data found, ignoring this battle");
-        g.handled = true;
+        t.handled = true;
         return;
     }
 
-    const uint32_t anchor = rd32(read, ctx, L.anchorPtr + g.offset);
+    const uint32_t anchor = rd32(read, ctx, L.anchorPtr + t.offset);
     if (!isMainRam(anchor))
         return;
     const uint32_t foeAnchor = rd32(read, ctx, anchor + L.foeAnchorOff);
@@ -406,7 +536,7 @@ void processFrame(ReadFn read, void* ctx)
         if (!decodePartyMon(read, ctx, foeAnchor + L.foeDataOff + i * kMonSize, foes[i]))
             return;   // not written completely yet, retry next time
     }
-    g.handled = true;
+    t.handled = true;
 
     const uint16_t tid = rd16(read, ctx, anchor + L.trainerIdOff);
     const uint16_t sid = rd16(read, ctx, anchor + L.trainerIdOff + 2);
@@ -415,31 +545,30 @@ void processFrame(ReadFn read, void* ctx)
         // Wild Pokémon carry the player's trainer IDs, trainer Pokémon don't
         const bool wild = count <= 2 && foes[i].otId == tid && foes[i].otSid == sid;
         if (wild)
-            report(foes[i]);
+            report(t, foes[i]);
         else
             PC_LOG("foe #%u lv%u is a trainer's Pokemon, not counted", foes[i].species, foes[i].level);
     }
 }
 
-void onStateLoaded()
+Tracker* newTracker() { return new Tracker(); }
+void deleteTracker(Tracker* t) { delete t; }
+void markStateLoaded(Tracker& t) { t.stateLoaded.store(true); }
+
+void resetState(Tracker& t)
 {
-    gStateLoaded.store(true);
+    t.inBattle = false;
+    t.handled = false;
+    t.queue.clear();
+    t.learnedIp = 0;
 }
 
-void resetState()
+void setGame(Tracker& t, const char* code)
 {
-    g.inBattle = false;
-    g.handled = false;
-    g.queue.clear();
-    g.learnedIp = 0;
-}
-
-void setGame(const char* code)
-{
-    std::memcpy(g.gameCode, code, 4);
-    g.gameCode[4] = 0;
-    g.supported = false;
-    g.game = nullptr;
+    std::memcpy(t.gameCode, code, 4);
+    t.gameCode[4] = 0;
+    t.supported = false;
+    t.game = nullptr;
     static const char kLangs[] = "EDFISJ";
     const char* lp = std::strchr(kLangs, code[3]);
     if (!lp || !code[3])
@@ -448,38 +577,67 @@ void setGame(const char* code)
     {
         if (std::strncmp(code, L.prefix, 3) == 0)
         {
-            g.game = &L;
-            g.offset = L.lang[lp - kLangs];
-            g.supported = true;
+            t.game = &L;
+            t.offset = L.lang[lp - kLangs];
+            t.supported = true;
             return;
         }
     }
 }
 
+// ---- instance registry --------------------------------------------------------
+
+namespace
+{
+std::mutex gTrackersLock;
+std::map<const void*, std::unique_ptr<Tracker>> gTrackers;
+
+Tracker& trackerFor(const void* key)
+{
+    std::lock_guard<std::mutex> lk(gTrackersLock);
+    auto& p = gTrackers[key];
+    if (!p)
+        p = std::make_unique<Tracker>();
+    return *p;
+}
+}
+
+void onStateLoaded(melonDS::NDS& nds)
+{
+    trackerFor(&nds).stateLoaded.store(true);
+}
+
+void onInstanceGone(melonDS::NDS& nds)
+{
+    std::lock_guard<std::mutex> lk(gTrackersLock);
+    gTrackers.erase(&nds);
+}
+
 #ifndef POKECOUNTER_NO_MELONDS
 void onFrame(melonDS::NDS& nds)
 {
+    Tracker& t = trackerFor(&nds);
     const void* cart = nds.NDSCartSlot.GetCart();
-    if (cart != g.cart)
+    if (cart != t.cart)
     {
-        g.cart = cart;
-        g.supported = false;
-        g.inBattle = false;
-        g.handled = false;
+        t.cart = cart;
+        t.supported = false;
+        t.inBattle = false;
+        t.handled = false;
         if (cart)
         {
             const auto& hdr = nds.NDSCartSlot.GetCart()->GetHeader();
-            setGame(hdr.GameCode);
-            if (g.supported)
+            setGame(t, hdr.GameCode);
+            if (t.supported)
             {
-                PC_LOG("%s detected (%s, offset %d), encounter reporting active", g.game->name, g.gameCode, (int)g.offset);
-                startLookup();
+                PC_LOG("%s detected (%s, offset %d), encounter reporting active", t.game->name, t.gameCode, (int)t.offset);
+                startLookup(t);
             }
         }
     }
-    if (!g.supported && g.queue.empty())
+    if (!t.supported && t.queue.empty())
         return;
-    processFrame(ramRead, &nds);
+    processFrame(t, ramRead, &nds);
 }
 #endif
 

@@ -7102,7 +7102,7 @@ bool MelonInstance::loadState(Savestate* state)
     if (loaded)
     {
         // WatermelonDS-LAN: a reloaded battle must be counted again
-        PokeCounter::onStateLoaded();
+        PokeCounter::onStateLoaded(*nds);
 
         resetAudioOutputAdaptivo();
         nds->ReleaseScreen();
