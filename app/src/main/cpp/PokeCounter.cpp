@@ -31,6 +31,7 @@ static void closeSock(SockT s) { close(s); }
 static void setNonBlocking(SockT s) { fcntl(s, F_SETFL, fcntl(s, F_GETFL, 0) | O_NONBLOCK); }
 #endif
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -79,21 +80,30 @@ struct GameLayout
     uint32_t battleIndicator;   // u8 at (this + lang offset): 0x41 / 0x97 / 0xC0 in battle
     int32_t  trainerIdOff;      // anchor + this: u16 TID, u16 SID
     int32_t  lang[6];           // offsets for E, D, F, I, S, J
+    int32_t  partyCountOff;     // anchor + this: u8 party size
+    int32_t  partyDataOff;      // anchor + this: 6 x 236-byte party structs
 };
 
 constexpr GameLayout kGames[] = {
-    {"IPK", "HeartGold",  0x021D4158, 0x6930,  0xC14,   0xC18,   0x021E76D2, -0x23F64, {0, -0x20, 0x20, -0x60, 0x20, -0x3B08}},
-    {"IPG", "SoulSilver", 0x021D4158, 0x6930,  0xC14,   0xC18,   0x021E76D2, -0x23F64, {0, -0x20, 0x20, -0x60, 0x40, -0x3B08}},
-    {"CPU", "Platinum",   0x021C0794, 0x217A8, -0x2D5C, -0x2D58, 0x021D18F2, 0x8C,     {0, 0x1A0, 0x1E0, 0x160, 0x200, -0xC00}},
-    {"ADA", "Diamond",    0x021C489C, 0x226FE, -0x2B74, -0x2B70, 0x021A1B2A, -0x12,    {0, 0x140, 0x180, 0xE0, 0x1A0, 0x1860}},
-    {"APA", "Pearl",      0x021C489C, 0x226FE, -0x2B74, -0x2B70, 0x021A1B2A, -0x12,    {0, 0x140, 0x180, 0xE0, 0x1A0, 0x1860}},
+    {"IPK", "HeartGold",  0x021D4158, 0x6930,  0xC14,   0xC18,   0x021E76D2, -0x23F64, {0, -0x20, 0x20, -0x60, 0x20, -0x3B08}, -0x23F44, -0x23F40},
+    {"IPG", "SoulSilver", 0x021D4158, 0x6930,  0xC14,   0xC18,   0x021E76D2, -0x23F64, {0, -0x20, 0x20, -0x60, 0x40, -0x3B08}, -0x23F44, -0x23F40},
+    {"CPU", "Platinum",   0x021C0794, 0x217A8, -0x2D5C, -0x2D58, 0x021D18F2, 0x8C,     {0, 0x1A0, 0x1E0, 0x160, 0x200, -0xC00}, 0xB0, 0xB4},
+    {"ADA", "Diamond",    0x021C489C, 0x226FE, -0x2B74, -0x2B70, 0x021A1B2A, -0x12,    {0, 0x140, 0x180, 0xE0, 0x1A0, 0x1860}, 0xE, 0x12},
+    {"APA", "Pearl",      0x021C489C, 0x226FE, -0x2B74, -0x2B70, 0x021A1B2A, -0x12,    {0, 0x140, 0x180, 0xE0, 0x1A0, 0x1860}, 0xE, 0x12},
 };
 
 // Wait this long (frames) for valid foe data after a battle started
 constexpr int kFoeTimeoutFrames = 600;
-// UDP retry (wall clock, so fast forward does not shorten it)
+// UDP retry (wall clock, so fast forward does not shorten it). A report is
+// repeated until the display confirms it: Wi-Fi drops out for seconds when
+// the handheld roams between access points, and a late report counts just
+// as well (the display drops repeats by eid). Retries slow down to 2 s.
 constexpr int kRetryMs = 400;
-constexpr int kMaxTries = 8;
+constexpr int kRetryMaxMs = 2000;
+constexpr size_t kQueueMax = 500;
+constexpr uint64_t kAckGapMs = 300;   // hold the next report back after an ack
+// Team: checked this often outside battles (frames), sent when a slot changed
+constexpr int kTeamCheckFrames = 60;
 
 uint64_t nowMs()
 {
@@ -106,6 +116,8 @@ struct Pending
     std::string json;
     int tries = 0;
     uint64_t nextMs = 0;
+    int slot = 0;          // team packet for this party slot (1..6), 0 = encounter
+    bool sent = false;
 };
 
 } // namespace
@@ -134,6 +146,11 @@ struct Tracker
     std::deque<Pending> queue;
 
     uint64_t frame = 0;
+
+    // team (t=mon packets for the display's Team tab)
+    std::string lastTeam[6];
+    int lastTeamCount = -1;
+    uint64_t teamCheckFrame = 0;
 
     // Set from any thread when a savestate (or rewind state) was loaded
     std::atomic<bool> stateLoaded{false};
@@ -419,8 +436,13 @@ void pumpNetwork(Tracker& t)
                 PC_LOG("display found at %s", ip);
             }
             t.learnedIp = from.sin_addr.s_addr;
-            if (!t.queue.empty() && std::strstr(buf, "\"ok\"") != nullptr)
+            // only an answer to something that went out confirms the head
+            if (!t.queue.empty() && t.queue.front().sent && std::strstr(buf, "\"ok\"") != nullptr)
+            {
                 t.queue.pop_front();
+                if (!t.queue.empty())
+                    t.queue.front().nextMs = std::max(t.queue.front().nextMs, nowMs() + kAckGapMs);
+            }
             fromLen = sizeof(from);
         }
     }
@@ -431,16 +453,15 @@ void pumpNetwork(Tracker& t)
     const uint64_t now = nowMs();
     if (now < p.nextMs)
         return;
-    if (p.tries >= kMaxTries)
+    if (p.tries == 20)
     {
-        PC_LOG("no reply from display, dropping: %s", p.json.c_str());
-        t.learnedIp = 0;   // fall back to lookup / broadcast
-        t.queue.pop_front();
-        return;
+        PC_LOG("no reply from display for a while, still retrying: %s", p.json.c_str());
+        t.learnedIp = 0;   // fall back to lookup / broadcast (address may have changed)
     }
     sendDatagram(t, p.json);
+    p.sent = true;
     p.tries++;
-    p.nextMs = now + kRetryMs;
+    p.nextMs = now + std::min<uint64_t>(kRetryMaxMs, (uint64_t)kRetryMs * (1 + p.tries / 6));
 }
 
 void report(Tracker& t, const DecodedMon& m)
@@ -463,12 +484,238 @@ void report(Tracker& t, const DecodedMon& m)
         t.shinyEvent.store(true);
         PC_LOG("shiny! pausing this instance, reset and savestate loading blocked until resumed");
     }
-    if (t.queue.size() > 16)
+    if (t.queue.size() >= kQueueMax)
         t.queue.pop_front();
     Pending p;
     p.json = json;
     p.nextMs = 0;
     t.queue.push_back(std::move(p));
+}
+
+// ---------------------------------------------------------------------------
+// Team: one {"t":"mon",...} packet per party Pokémon for the display's Team
+// tab (IVs, EVs, stats, moves ...). Checked outside battles about once a
+// second; only slots whose data changed are sent, and a newer state of a
+// slot replaces one still waiting in the queue.
+// ---------------------------------------------------------------------------
+
+// Gen 4 character codes 0x0121.. (Latin part), from pokebot-nds (MIT)
+constexpr uint16_t kCharFirst = 0x0121;
+const char* const kChars[] = {
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B",
+    "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N",
+    "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l",
+    "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x",
+    "y", "z", "À", "Á", "Â", "Ã", "Ä", "Å", "Æ", "Ç", "È", "É",
+    "Ê", "Ë", "Ì", "Í", "Î", "Ï", "Ð", "Ñ", "Ò", "Ó", "Ô", "Õ",
+    "Ö", "×", "Ø", "Ù", "Ú", "Û", "Ü", "Ý", "Þ", "ß", "à", "á",
+    "â", "ã", "ä", "å", "æ", "ç", "è", "é", "ê", "ë", "ì", "í",
+    "î", "ï", "ð", "ñ", "ò", "ó", "ô", "õ", "ö", "÷", "ø", "ù",
+    "ú", "û", "ü", "ý", "þ", "ÿ", "Œ", "œ", "Ş", "ş", "ª", "º",
+    "er", "re", "r", "₽", "¡", "¿", "!", "?", ",", ".", "…", "･",
+    "/", "‘", "’", "“", "”", "„", "«", "»", "(", ")", "♂", "♀",
+    "+", "-", "*", "#", "=", "&", "~", ":", ";", "♠", "♣", "♥",
+    "♦", "★", "◎", "○", "□", "△", "◇", "@", "♪", "%", "☀", "☁",
+    "☂", "☃", "😑", "☺", "☹", "😠", "⤴︎", "⤵︎", "💤", " ", "e", "PK",
+    "MN", " ", " ", " ", "", " ", " ", "°", "_", "＿", "․", "‥",
+};
+
+// Decrypts the 128 data bytes (blocks A..D in order, offsets 0x08..0x87) and
+// the first 20 bytes of the party stats (0x88..0x9B).
+bool decryptMon(ReadFn read, void* ctx, uint32_t addr, uint8_t data[128], uint8_t stats[20], bool raw)
+{
+    const uint32_t pid = rd32(read, ctx, addr);
+    const uint16_t checksum = rd16(read, ctx, addr + 6);
+    if (checksum == 0)
+        return false;
+    uint8_t stored[4][32];
+    uint32_t seed = checksum;
+    for (int b = 0; b < 4; b++)
+        for (int i = 0; i < 32; i += 2)
+        {
+            seed = lcrng(seed);
+            uint16_t w = rd16(read, ctx, addr + 0x08 + b * 32 + i) ^ (raw ? 0 : (uint16_t)(seed >> 16));
+            stored[b][i] = (uint8_t)w;
+            stored[b][i + 1] = (uint8_t)(w >> 8);
+        }
+    const uint8_t* order = kBlockOrder[((pid & 0x3E000u) >> 13) % 24];
+    for (int b = 0; b < 4; b++)
+        std::memcpy(data + b * 32, stored[order[b] - 1], 32);
+    uint16_t sum = 0;
+    for (int i = 0; i < 128; i += 2)
+        sum = (uint16_t)(sum + (data[i] | (data[i + 1] << 8)));
+    if (sum != checksum)
+        return false;
+    seed = pid;
+    for (int i = 0; i < 20; i += 2)
+    {
+        seed = lcrng(seed);
+        uint16_t w = rd16(read, ctx, addr + 0x88 + i) ^ (raw ? 0 : (uint16_t)(seed >> 16));
+        stats[i] = (uint8_t)w;
+        stats[i + 1] = (uint8_t)(w >> 8);
+    }
+    return true;
+}
+
+void jsonEscape(std::string& out, const std::string& s)
+{
+    out += '"';
+    for (unsigned char c : s)
+    {
+        if (c == '"' || c == '\\') { out += '\\'; out += (char)c; }
+        else if (c < 0x20) { char b[8]; std::snprintf(b, sizeof(b), "\\u%04x", c); out += b; }
+        else out += (char)c;
+    }
+    out += '"';
+}
+
+std::string decodeName(const uint8_t* p, int maxChars)
+{
+    std::string s;
+    for (int i = 0; i < maxChars; i++)
+    {
+        uint16_t c = (uint16_t)(p[i * 2] | (p[i * 2 + 1] << 8));
+        if (c == 0xFFFF || c == 0)
+            break;
+        if (c >= kCharFirst && c < kCharFirst + sizeof(kChars) / sizeof(kChars[0]))
+            s += kChars[c - kCharFirst];
+        else if (c == 0x01DE)
+            s += ' ';
+        else
+            s += '?';
+    }
+    return s;
+}
+
+// JSON for one party slot, or "" if the data is not valid (being written)
+std::string teamMonJson(Tracker& t, ReadFn read, void* ctx, uint32_t addr, int slot, int count)
+{
+    uint8_t data[128], st[20];
+    bool raw = false;
+    if (!decryptMon(read, ctx, addr, data, st, false))
+    {
+        if (!decryptMon(read, ctx, addr, data, st, true))
+            return "";
+        raw = true;
+    }
+    (void)raw;
+    auto u8 = [&](int off) { return (unsigned)data[off - 0x08]; };
+    auto u16 = [&](int off) { return (unsigned)(data[off - 0x08] | (data[off - 0x07] << 8)); };
+    auto u32 = [&](int off) { return (uint32_t)u16(off) | ((uint32_t)u16(off + 2) << 16); };
+    auto s16 = [&](int off) { return (unsigned)(st[off - 0x88] | (st[off - 0x87] << 8)); };
+    const uint32_t pid = rd32(read, ctx, addr);
+    const unsigned species = u16(0x08);
+    if (species < 1 || species > 493)
+        return "";
+    const uint32_t ivWord = u32(0x38);
+    char head[96];
+    if (ivWord & 0x40000000u)   // egg
+    {
+        std::snprintf(head, sizeof(head), "{\"t\":\"mon\",\"src\":\"%s\",\"slot\":%d,\"n\":%d,\"egg\":true}", t.gameCode, slot, count);
+        return head;
+    }
+    const unsigned level = st[0x8C - 0x88];
+    if (level < 1 || level > 100)
+        return "";
+    const unsigned tid = u16(0x0C), sid = u16(0x0E);
+    const bool shiny = (uint16_t)(tid ^ sid ^ (pid >> 16) ^ (pid & 0xFFFF)) < 8;
+    const unsigned g = (u8(0x40) >> 1) & 3;
+    // wire order of the six values: HP, Atk, Def, SpA, SpD, Spe
+    const unsigned ivs[6] = {ivWord & 31, (ivWord >> 5) & 31, (ivWord >> 10) & 31,
+                             (ivWord >> 20) & 31, (ivWord >> 25) & 31, (ivWord >> 15) & 31};
+    const unsigned evs[6] = {u8(0x18), u8(0x19), u8(0x1A), u8(0x1C), u8(0x1D), u8(0x1B)};
+    const unsigned stats[6] = {s16(0x90), s16(0x92), s16(0x94), s16(0x98), s16(0x9A), s16(0x96)};
+    const uint32_t status = (uint32_t)(st[0] | (st[1] << 8) | (st[2] << 16) | ((uint32_t)st[3] << 24));
+    const char* statusName = (status & 7) ? "SCHLAF" : (status & 0x88) ? "GIFT" : (status & 0x10) ? "BRAND"
+                           : (status & 0x20) ? "EIS" : (status & 0x40) ? "PAR" : "";
+    std::string j;
+    j.reserve(512);
+    char b[160];
+    std::snprintf(b, sizeof(b), "{\"t\":\"mon\",\"src\":\"%s\",\"slot\":%d,\"n\":%d,\"pid\":%u,\"sp\":%u,\"lv\":%u,\"nick\":",
+                  t.gameCode, slot, count, (unsigned)pid, species, level);
+    j += b;
+    jsonEscape(j, decodeName(&data[0x48 - 0x08], 11));
+    std::snprintf(b, sizeof(b), ",\"g\":\"%c\",\"shiny\":%s,\"nat\":%u,\"ab\":%u,\"it\":%u",
+                  g == 0 ? 'M' : g == 1 ? 'F' : 'N', shiny ? "true" : "false", (unsigned)(pid % 25), u8(0x15), u16(0x0A));
+    j += b;
+    auto arr = [&](const char* key, const unsigned* v, int n) {
+        j += ",\"";
+        j += key;
+        j += "\":[";
+        for (int i = 0; i < n; i++)
+        {
+            if (i) j += ',';
+            j += std::to_string(v[i]);
+        }
+        j += ']';
+    };
+    arr("ivs", ivs, 6);
+    arr("evs", evs, 6);
+    arr("st", stats, 6);
+    std::snprintf(b, sizeof(b), ",\"hp\":%u,\"stat\":\"%s\"", s16(0x8E), statusName);
+    j += b;
+    const unsigned mv[4] = {u16(0x28), u16(0x2A), u16(0x2C), u16(0x2E)};
+    const unsigned pp[4] = {u8(0x30), u8(0x31), u8(0x32), u8(0x33)};
+    const unsigned ppu[4] = {u8(0x34), u8(0x35), u8(0x36), u8(0x37)};
+    arr("mv", mv, 4);
+    arr("pp", pp, 4);
+    arr("ppu", ppu, 4);
+    std::snprintf(b, sizeof(b), ",\"fr\":%u,\"pkrs\":%u,\"exp\":%u,\"ball\":%u}",
+                  u8(0x14), u8(0x82), (unsigned)u32(0x10), u8(0x83));
+    j += b;
+    return j;
+}
+
+void enqueueTeam(Tracker& t, std::string json, int slot)
+{
+    // a newer state replaces one of the same slot that has not gone out yet
+    for (auto it = t.queue.begin(); it != t.queue.end();)
+    {
+        if (it != t.queue.begin() && it->slot == slot && !it->sent)
+            it = t.queue.erase(it);
+        else
+            ++it;
+    }
+    if (t.queue.size() >= kQueueMax)
+        t.queue.pop_front();
+    Pending p;
+    p.json = std::move(json);
+    p.slot = slot;
+    t.queue.push_back(std::move(p));
+}
+
+void teamTick(Tracker& t, ReadFn read, void* ctx)
+{
+    if (!teamEnabled() || t.frame < t.teamCheckFrame)
+        return;
+    t.teamCheckFrame = t.frame + kTeamCheckFrames;
+    const GameLayout& L = *t.game;
+    const uint32_t anchor = rd32(read, ctx, L.anchorPtr + t.offset);
+    if (!isMainRam(anchor))
+        return;
+    const unsigned count = read(ctx, anchor + L.partyCountOff);
+    if (count < 1 || count > 6)
+        return;
+    std::string fresh[6];
+    for (unsigned i = 0; i < count; i++)
+    {
+        fresh[i] = teamMonJson(t, read, ctx, anchor + L.partyDataOff + i * kMonSize, (int)i + 1, (int)count);
+        if (fresh[i].empty())
+            return;   // being written (e.g. right after a swap), next time
+    }
+    const bool sizeChanged = (int)count != t.lastTeamCount;
+    for (unsigned i = 0; i < count; i++)
+    {
+        if (sizeChanged || fresh[i] != t.lastTeam[i])
+        {
+            t.lastTeam[i] = fresh[i];
+            enqueueTeam(t, fresh[i], (int)i + 1);
+        }
+    }
+    for (unsigned i = count; i < 6; i++)
+        t.lastTeam[i].clear();
+    t.lastTeamCount = (int)count;
 }
 
 // ---------------------------------------------------------------------------
@@ -514,9 +761,13 @@ void processFrame(Tracker& t, ReadFn read, void* ctx)
     if (!battle)
     {
         if (t.inBattle)
+        {
             PC_LOG("battle ended");
+            t.teamCheckFrame = t.frame + 30;   // fresh values right after the battle
+        }
         t.inBattle = false;
         t.handled = false;
+        teamTick(t, read, ctx);
         return;
     }
     if (!t.inBattle)
@@ -576,6 +827,8 @@ void resetState(Tracker& t)
     t.handled = false;
     t.queue.clear();
     t.learnedIp = 0;
+    for (auto& s : t.lastTeam) s.clear();
+    t.lastTeamCount = -1;
 }
 
 void setGame(Tracker& t, const char* code)
@@ -623,6 +876,28 @@ bool autoPauseEnabled()
 void setAutoPauseEnabled(bool on)
 {
     gAutoPause.store(on ? 1 : 0);
+}
+
+namespace
+{
+std::atomic<int> gTeam{-1};
+}
+
+bool teamEnabled()
+{
+    int v = gTeam.load();
+    if (v < 0)
+    {
+        const char* env = std::getenv("POKECOUNTER_TEAM");
+        v = (env && (env[0] == '0' || env[0] == 'n' || env[0] == 'N' || env[0] == 'f' || env[0] == 'F')) ? 0 : 1;
+        gTeam.store(v);
+    }
+    return v != 0;
+}
+
+void setTeamEnabled(bool on)
+{
+    gTeam.store(on ? 1 : 0);
 }
 
 // The pause waits until the display has confirmed the report (or 1.5 s have

@@ -58,6 +58,14 @@ void onInstanceGone(melonDS::NDS& nds);
 bool autoPauseEnabled();
 void setAutoPauseEnabled(bool on);
 
+// ---- team ------------------------------------------------------------------
+// Outside battles the party is read about once a second; every Pokémon whose
+// data changed is sent as {"t":"mon",...} (IVs, EVs, stats, moves, nature,
+// ability, item, nickname) for the display's Team tab. On by default,
+// POKECOUNTER_TEAM=0 switches it off.
+bool teamEnabled();
+void setTeamEnabled(bool on);
+
 // Emulator thread, right after onFrame(): true once per shiny, as soon as the
 // display confirmed the report (at most 1.5 s later), so it still hears about it.
 bool takeShinyEvent(melonDS::NDS& nds);
