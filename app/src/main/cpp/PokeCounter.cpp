@@ -104,6 +104,7 @@ constexpr size_t kQueueMax = 500;
 constexpr uint64_t kAckGapMs = 300;   // hold the next report back after an ack
 // Team: checked this often outside battles (frames), sent when a slot changed
 constexpr int kTeamCheckFrames = 60;
+constexpr int kBoxSlotBase = 100;     // Pending::slot of box packets: 100 + box * 2 + half
 
 uint64_t nowMs()
 {
@@ -152,6 +153,9 @@ struct Tracker
     int lastTeamCount = -1;
     uint64_t teamCheckFrame = 0;
 
+    // PC boxes (from the save memory)
+    uint64_t boxCheckMs = 0;
+
     // Set from any thread when a savestate (or rewind state) was loaded
     std::atomic<bool> stateLoaded{false};
 
@@ -159,6 +163,10 @@ struct Tracker
     std::atomic<bool> shinyEvent{false};
     std::atomic<bool> shinyHold{false};
     uint64_t shinyAtMs = 0;   // when the shiny was reported
+
+    // every reported wild Pokémon (auto-hunt, see AutoHunt.h)
+    std::atomic<uint32_t> encounterSeq{0};
+    std::atomic<bool> lastShiny{false};
 
     ~Tracker()
     {
@@ -477,6 +485,8 @@ void report(Tracker& t, const DecodedMon& m)
                   // the shiny value (TID ^ SID ^ PID high ^ PID low, shiny below 8)
                   (unsigned)(m.otId ^ m.otSid), t.gameCode);
     PC_LOG("wild encounter: %s", json);
+    t.lastShiny.store(m.shiny);
+    t.encounterSeq.fetch_add(1);
     if (m.shiny && autoPauseEnabled())
     {
         t.shinyHold.store(true);
@@ -489,7 +499,14 @@ void report(Tracker& t, const DecodedMon& m)
     Pending p;
     p.json = json;
     p.nextMs = 0;
-    t.queue.push_back(std::move(p));
+    // ahead of box packets that have not gone out yet: an encounter (and a
+    // shiny pause waiting for it) does not queue behind a whole PC upload
+    auto it = t.queue.begin();
+    if (it != t.queue.end())
+        ++it;
+    while (it != t.queue.end() && it->slot < kBoxSlotBase)
+        ++it;
+    t.queue.insert(it, std::move(p));
 }
 
 // ---------------------------------------------------------------------------
@@ -718,6 +735,237 @@ void teamTick(Tracker& t, ReadFn read, void* ctx)
     t.lastTeamCount = (int)count;
 }
 
+
+// ---------------------------------------------------------------------------
+// PC boxes: read from the save memory (the state of the last in-game save),
+// sent as {"t":"box",...} packets, half a box each (one UDP datagram). Checked
+// every 2 s; only boxes whose bytes changed are sent. Instances that run the
+// same game share what was sent, so 10 hunting windows send it once.
+// Save layout from PKHeX (SAV4Sinnoh / SAV4HGSS): two 0x40000 partitions, the
+// storage block of each with a footer counter; the newer copy is the current one.
+// ---------------------------------------------------------------------------
+
+constexpr int kBoxCount = 18;
+constexpr int kBoxMonSize = 136;
+constexpr uint64_t kBoxCheckMs = 2000;
+
+struct SaveLayout
+{
+    const char* prefix;
+    uint32_t storageStart, storageSize;   // in each partition
+    uint32_t boxStride;                   // box i at boxFirst + i * boxStride
+    uint32_t boxFirst;
+    uint32_t names;                       // 18 x 40 bytes (20 characters)
+    uint32_t current;                     // u8 current box (0-based)
+};
+
+constexpr SaveLayout kSaves[] = {
+    {"IPK", 0xF700, 0x12310, 0x1000, 0, 0x12008, 0x12000},
+    {"IPG", 0xF700, 0x12310, 0x1000, 0, 0x12008, 0x12000},
+    {"CPU", 0xCF2C, 0x121E4, 0xFF0, 4, 0x11EE4, 0},
+    {"ADA", 0xC100, 0x121E0, 0xFF0, 4, 0x11EE4, 0},
+    {"APA", 0xC100, 0x121E0, 0xFF0, 4, 0x11EE4, 0},
+};
+
+// Growth rate per species (1 slow, 2 medium, 3 fast, 4 medium slow,
+// 5 erratic, 6 fluctuating; PokeAPI pokemon_species.csv)
+const char kGrowth[] =
+    "4444444442222224442222222222444444332233224442222222222221144444444444"
+    "4114442222222222222114442222222112222222113222222112222211111222222222"
+    "2111111111444444444422223333211233332244443324444344222224232222224233"
+    "2241422221132231111222213222221311111111444444444422222222244444444221"
+    "1122661115554446632334311122112256466116622233344444555633226622555555"
+    "2433331342224445551311111111111111114444444444442244444445555222442222"
+    "2223662234333222222342111144111122155111422122232224121232211111111111"
+    "141";
+
+uint64_t expForLevel(int rate, uint64_t x)
+{
+    if (x <= 1)
+        return 0;
+    const uint64_t c = x * x * x;
+    switch (rate)
+    {
+    case 1: return 5 * c / 4;
+    case 2: return c;
+    case 3: return 4 * c / 5;
+    case 4: return 6 * c / 5 + 100 * x - 15 * x * x - 140;
+    case 5:
+        if (x <= 50) return c * (100 - x) / 50;
+        if (x <= 68) return c * (150 - x) / 100;
+        if (x <= 98) return c * ((1911 - 10 * x) / 3) / 500;
+        return c * (160 - x) / 100;
+    default:
+        if (x <= 15) return c * ((x + 1) / 3 + 24) / 50;
+        if (x <= 36) return c * (x + 14) / 50;
+        return c * (x / 2 + 32) / 50;
+    }
+}
+
+} // namespace
+
+int levelFromExp(int species, uint32_t exp)
+{
+    if (species < 1 || species > 493)
+        return 0;
+    const int rate = kGrowth[species - 1] - '0';
+    int lv = 1;
+    while (lv < 100 && expForLevel(rate, (uint64_t)lv + 1) <= exp)
+        lv++;
+    return lv;
+}
+
+namespace
+{
+
+struct SaveBuf
+{
+    const uint8_t* p;
+    uint32_t len;
+};
+
+uint8_t saveRead(void* ctx, uint32_t addr)
+{
+    auto* s = static_cast<SaveBuf*>(ctx);
+    return addr < s->len ? s->p[addr] : 0;
+}
+
+uint32_t le32(const uint8_t* p) { return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24); }
+
+// PKHeX SAV4BlockDetection.CompareCounters: 0 first, 1 second, 2 same
+int compareCounters(uint32_t c1, uint32_t c2)
+{
+    if (c1 == 0xFFFFFFFFu && c2 != 0xFFFFFFFEu) return 1;
+    if (c2 == 0xFFFFFFFFu && c1 != 0xFFFFFFFEu) return 0;
+    if (c1 > c2) return 0;
+    if (c1 < c2) return 1;
+    return 2;
+}
+
+std::mutex gBoxLock;
+std::map<std::string, uint64_t> gBoxSent;   // "IPGD:3" -> hash of what was sent
+
+uint64_t fnv(const uint8_t* p, size_t n, uint64_t h = 1469598103934665603ull)
+{
+    for (size_t i = 0; i < n; i++)
+        h = (h ^ p[i]) * 1099511628211ull;
+    return h;
+}
+
+// One box Pokémon as [slot,sp,lv,fl,pid,ivs,it,ab,"nick",ball], "" if empty or invalid
+std::string boxMonJson(const uint8_t* mon, int slot)
+{
+    SaveBuf sb{mon, kBoxMonSize};
+    uint8_t data[128], st[20];
+    if (le32(mon) == 0 && mon[6] == 0 && mon[7] == 0)
+        return "";
+    if (!decryptMon(saveRead, &sb, 0, data, st, false))
+        return "";
+    auto u8 = [&](int off) { return (unsigned)data[off - 0x08]; };
+    auto u16 = [&](int off) { return (unsigned)(data[off - 0x08] | (data[off - 0x07] << 8)); };
+    auto u32 = [&](int off) { return (uint32_t)u16(off) | ((uint32_t)u16(off + 2) << 16); };
+    const uint32_t pid = le32(mon);
+    const unsigned species = u16(0x08);
+    if (species < 1 || species > 493)
+        return "";
+    const uint32_t ivWord = u32(0x38);
+    const bool egg = ivWord & 0x40000000u, nicked = ivWord & 0x80000000u;
+    const unsigned tid = u16(0x0C), sid = u16(0x0E);
+    const bool shiny = (uint16_t)(tid ^ sid ^ (pid >> 16) ^ (pid & 0xFFFF)) < 8;
+    const unsigned g = (u8(0x40) >> 1) & 3;
+    const unsigned fl = (shiny ? 1u : 0u) | ((g > 2 ? 2 : g) << 1) | (egg ? 8u : 0u);
+    const int lv = egg ? 0 : levelFromExp((int)species, u32(0x10));
+    std::string j;
+    char b[128];
+    std::snprintf(b, sizeof(b), "[%d,%u,%d,%u,%u,%u,%u,%u,", slot, species, lv, fl, (unsigned)pid,
+                  (unsigned)(ivWord & 0x3FFFFFFFu), u16(0x0A), u8(0x15));
+    j += b;
+    jsonEscape(j, nicked && !egg ? decodeName(&data[0x48 - 0x08], 11) : std::string());
+    std::snprintf(b, sizeof(b), ",%u]", u8(0x83));
+    j += b;
+    return j;
+}
+
+} // namespace
+
+void processSave(Tracker& t, const uint8_t* save, uint32_t len)
+{
+    if (!t.supported || !save)
+        return;
+    const SaveLayout* S = nullptr;
+    for (const SaveLayout& L : kSaves)
+        if (std::strncmp(t.gameCode, L.prefix, 3) == 0)
+            S = &L;
+    if (!S || len < 0x80000)
+        return;
+    const uint64_t now = nowMs();
+    if (now < t.boxCheckMs)
+        return;
+    t.boxCheckMs = now + kBoxCheckMs;
+
+    const uint32_t foot = S->storageStart + S->storageSize - 0x14;
+    uint32_t base = S->storageStart;
+    const uint32_t a = le32(save + foot), b = le32(save + foot + 0x40000);
+    if (a == 0xFFFFFFFFu && b == 0xFFFFFFFFu)
+        return;   // never saved
+    int newer = compareCounters(a, b);
+    if (newer == 2)
+        newer = compareCounters(le32(save + foot + 4), le32(save + foot + 0x40004)) == 1 ? 1 : 0;
+    if (newer == 1)
+        base += 0x40000;
+    const uint8_t* st = save + base;
+    unsigned cur = st[S->current];
+    if (S->current == 0 && S->boxFirst == 4)
+        cur = le32(st);
+    cur = cur < kBoxCount ? cur + 1 : 1;
+
+    for (int box = 0; box < kBoxCount; box++)
+    {
+        const uint8_t* bx = st + S->boxFirst + box * S->boxStride;
+        const uint8_t* nameP = st + S->names + box * 40;
+        uint64_t h = fnv(bx, 30 * kBoxMonSize);
+        h = fnv(nameP, 40, h);
+        h = fnv(reinterpret_cast<const uint8_t*>(&cur), sizeof(cur), h);
+        const std::string key = std::string(t.gameCode) + ":" + std::to_string(box);
+        {
+            std::lock_guard<std::mutex> lk(gBoxLock);
+            auto it = gBoxSent.find(key);
+            if (it != gBoxSent.end() && it->second == h)
+                continue;
+            gBoxSent[key] = h;
+        }
+        std::string name = decodeName(nameP, 20);
+        if (name.empty())
+            name = "BOX " + std::to_string(box + 1);
+        for (int half = 0; half < 2; half++)
+        {
+            std::string j;
+            j.reserve(1200);
+            char hd[128];
+            std::snprintf(hd, sizeof(hd), "{\"t\":\"box\",\"src\":\"%s\",\"b\":%d,\"h\":%d,\"nb\":%d,\"cur\":%u,\"name\":",
+                          t.gameCode, box + 1, half, kBoxCount, cur);
+            j += hd;
+            jsonEscape(j, name);
+            j += ",\"m\":[";
+            bool first = true;
+            for (int s = half * 15; s < half * 15 + 15; s++)
+            {
+                std::string m = boxMonJson(bx + s * kBoxMonSize, s + 1);
+                if (m.empty())
+                    continue;
+                if (!first) j += ',';
+                first = false;
+                j += m;
+            }
+            j += "]}";
+            enqueueTeam(t, std::move(j), kBoxSlotBase + box * 2 + half);
+        }
+        PC_LOG("box %d (%s) changed, sending", box + 1, name.c_str());
+    }
+}
+
+namespace
+{
 // ---------------------------------------------------------------------------
 // Game detection
 // ---------------------------------------------------------------------------
@@ -900,6 +1148,23 @@ void setTeamEnabled(bool on)
     gTeam.store(on ? 1 : 0);
 }
 
+namespace
+{
+std::atomic<int> gBoxes{-1};
+}
+
+bool boxesEnabled()
+{
+    int v = gBoxes.load();
+    if (v < 0)
+    {
+        const char* env = std::getenv("POKECOUNTER_BOXES");
+        v = (env && (env[0] == '0' || env[0] == 'n' || env[0] == 'N' || env[0] == 'f' || env[0] == 'F')) ? 0 : 1;
+        gBoxes.store(v);
+    }
+    return v != 0;
+}
+
 // The pause waits until the display has confirmed the report (or 1.5 s have
 // passed): a paused emulator no longer sends, so the display would only learn
 // about the shiny - and play its melody - after resuming.
@@ -943,6 +1208,9 @@ void onStateLoaded(melonDS::NDS& nds)
 }
 
 bool takeShinyEvent(melonDS::NDS& nds) { return takeShinyEvent(trackerFor(&nds)); }
+uint32_t encounterSeq(melonDS::NDS& nds) { return trackerFor(&nds).encounterSeq.load(); }
+bool lastEncounterShiny(melonDS::NDS& nds) { return trackerFor(&nds).lastShiny.load(); }
+bool gameSupported(melonDS::NDS& nds) { return trackerFor(&nds).supported; }
 bool shinyHold(melonDS::NDS& nds) { return shinyHold(trackerFor(&nds)); }
 void releaseShinyHold(melonDS::NDS& nds) { releaseShinyHold(trackerFor(&nds)); }
 
@@ -1004,6 +1272,8 @@ void onFrame(melonDS::NDS& nds)
     if (!t.supported && t.queue.empty())
         return;
     processFrame(t, ramRead, &nds);
+    if (t.supported && boxesEnabled())
+        processSave(t, nds.GetNDSSave(), nds.GetNDSSaveLength());
 }
 #endif
 

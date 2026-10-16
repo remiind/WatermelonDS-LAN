@@ -66,11 +66,25 @@ void setAutoPauseEnabled(bool on);
 bool teamEnabled();
 void setTeamEnabled(bool on);
 
+// ---- PC boxes ---------------------------------------------------------------
+// The 18 boxes of the last in-game save (save memory, not RAM) are checked
+// every 2 s; changed boxes are sent as {"t":"box",...} (half a box per
+// packet) for the display's Boxes tab. Instances running the same game send a
+// box only once. On by default, POKECOUNTER_BOXES=0 switches it off.
+bool boxesEnabled();
+
 // Emulator thread, right after onFrame(): true once per shiny, as soon as the
 // display confirmed the report (at most 1.5 s later), so it still hears about it.
 bool takeShinyEvent(melonDS::NDS& nds);
 bool shinyHold(melonDS::NDS& nds);
 void releaseShinyHold(melonDS::NDS& nds);
+
+// Auto-hunt (AutoHunt.h): number of wild Pokémon reported by this instance so
+// far, whether the last one was shiny, and whether the running game is one of
+// the supported ones.
+uint32_t encounterSeq(melonDS::NDS& nds);
+bool lastEncounterShiny(melonDS::NDS& nds);
+bool gameSupported(melonDS::NDS& nds);
 
 // For frontends with a single emulator instance (Android).
 bool takeAnyShinyEvent();
@@ -109,6 +123,10 @@ void setGame(Tracker& t, const char* gameCode);
 // One emulated frame of battle tracking, reading RAM through `read`.
 void processFrame(Tracker& t, ReadFn read, void* ctx);
 void resetState(Tracker& t);
+// Checks the PC boxes in a DS save image (at most every 2 s, see above).
+void processSave(Tracker& t, const uint8_t* save, uint32_t len);
+// Level of a Pokémon from its experience points (Gen 4 growth rates).
+int levelFromExp(int species, uint32_t exp);
 void markStateLoaded(Tracker& t);
 bool takeShinyEvent(Tracker& t);
 bool shinyHold(Tracker& t);
