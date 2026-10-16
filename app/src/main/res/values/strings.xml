@@ -1178,5 +1178,18 @@
     <string name="freedreno_save_failed">Could not save the setting. Tap Restart to try again.</string>
     <!-- WatermelonDS-LAN: PokéCounter shiny auto-pause -->
     <string name="pokecounter_shiny_paused" translatable="false">✨ Shiny! Emulation pausiert – Reset und Laden sind gesperrt, bis du fortsetzt.</string>
+    <string name="input_egg_hunt" translatable="false">Pokémon Ei-Jagd (Pension)</string>
+    <string name="egg_hunt_on" translatable="false">Ei-Jagd AN: holt Eier, bis ein Shiny-Ei kommt – nochmal drücken beendet. Vorspulen beschleunigt.</string>
+    <string name="egg_hunt_off" translatable="false">Ei-Jagd AUS</string>
+    <string name="egg_hunt_shiny" translatable="false">✨ SHINY-EI! Es ist das letzte im Team – selbst ausbrüten.</string>
+    <string name="egg_hunt_not_in_game" translatable="false">Ei-Jagd gestoppt: der Spielstand lädt nicht an der Startstelle – auf dem Weg neben der Pension speichern.</string>
+    <string name="egg_hunt_no_bike" translatable="false">Ei-Jagd gestoppt: Fahrrad lässt sich nicht nutzen – auf Y legen.</string>
+    <string name="egg_hunt_blocked" translatable="false">Ei-Jagd gestoppt: hängt fest (Weg blockiert oder Text geht nicht zu).</string>
+    <string name="egg_hunt_no_eggs" translatable="false">Ei-Jagd gestoppt: lange kein Ei – verstehen sich die Eltern?</string>
+    <string name="egg_hunt_not_supported" translatable="false">Ei-Jagd: nur für Diamant, Perl, Platin, HeartGold, SoulSilver.</string>
+    <string name="egg_hunt_not_loaded" translatable="false">Ei-Jagd: erst den Spielstand laden (auf dem Weg neben der Pension).</string>
+    <string name="egg_hunt_party_full" translatable="false">Ei-Jagd: Team ist voll – Platz für die Eier lassen.</string>
+    <string name="egg_hunt_shiny_hold" translatable="false">Ei-Jagd: erst das Shiny fortsetzen.</string>
+    <string name="egg_hunt_round" translatable="false">Ei-Jagd: Runde %1$d ohne Shiny, Reset</string>
     <string name="pokecounter_shiny_protected" translatable="false">✨ Shiny-Schutz: Reset und Laden erst nach dem Fortsetzen möglich.</string>
 </resources>

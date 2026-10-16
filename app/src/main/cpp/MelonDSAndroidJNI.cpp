@@ -18,6 +18,7 @@
 #include <chrono>
 #include <limits>
 #include <pthread.h>
+#include <thread>
 #include <unistd.h>
 #include <cstdlib>
 #include <time.h>
@@ -2535,6 +2536,13 @@ Java_me_magnum_melonds_MelonEmulator_isShinyHoldActive(JNIEnv*, jobject)
     return PokeCounter::anyShinyHold() ? JNI_TRUE : JNI_FALSE;
 }
 
+// WatermelonDS-LAN: egg hunt on/off (PokeCounter.h); answers come as event 106
+JNIEXPORT void JNICALL
+Java_me_magnum_melonds_MelonEmulator_toggleEggHunt(JNIEnv*, jobject)
+{
+    MelonDSAndroid::requestEggHuntToggle();
+}
+
 JNIEXPORT void JNICALL
 Java_me_magnum_melonds_MelonEmulator_requestRtcSync(JNIEnv* env, jobject thiz)
 {
@@ -3314,6 +3322,11 @@ void* emulate(void*)
             }
             pthread_mutex_unlock(&emuThreadMutex);
         }
+
+        // WatermelonDS-LAN: the egg hunt wants a reset: done from another thread
+        // exactly like the reset button (pause, reset, resume)
+        if (MelonDSAndroid::takeEggHuntResetRequest())
+            std::thread([] { Java_me_magnum_melonds_MelonEmulator_resetEmulation(nullptr, nullptr); }).detach();
 
         // WatermelonDS-LAN: a shiny wild Pokémon was reported -> pause right
         // here and let the UI show the pause menu (reset / loading blocked).

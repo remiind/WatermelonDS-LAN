@@ -1044,13 +1044,16 @@ uint8_t ramRead(void* ctx, uint32_t addr)
 // ---------------------------------------------------------------------------
 // Egg hunt (Masuda method), Gen 4. The player saves on the long path next to
 // the day care (HGSS: Route 34, D/P/Pt: Solaceon Town) with the parents in
-// the day care, a Flame Body / Magma Armor Pokémon and free slots in the
-// party and the bike on Y. Per window, toggled by a hotkey:
+// the day care, free slots in the party and the bike on Y. Per window,
+// toggled by a hotkey:
 //   reset -> A through title and "Continue" -> bike up and down the path ->
-//   when the day-care man has an egg: ride to him and take it -> every hatch
-//   is clicked through (B: no nickname) and reported like an encounter ->
-//   shiny: stop (the shiny auto-pause holds the window), party full and
-//   everything hatched: reset and start over.
+//   when the day-care man has an egg: ride to him and take it -> check it
+//   right away: in Gen 4 the PID (rolled up to 5 times with Masuda) is fixed
+//   when the egg is made, and the egg hatches shiny if PID and the player's
+//   TID/SID give a shiny value below 8 -> every egg is reported like an
+//   encounter -> shiny egg: stop (the shiny auto-pause holds the window, the
+//   player hatches it), party full: reset and start over. No hatching needed.
+//   Should an egg hatch on the way anyway, its texts are clicked through.
 // Coordinates, pointers and routes from pokebot-nds (methods/hgss.lua,
 // gen_iv.lua, pt.lua; MIT).
 // ---------------------------------------------------------------------------
@@ -1129,6 +1132,31 @@ bool readEggRam(const Tracker& t, ReadFn read, void* ctx, EggRam& r)
     r.bike = read(ctx, anchor + L.bikeOff) == 1;
     r.gear = L.gearOff ? read(ctx, anchor + L.gearOff) : 1;
     r.daycareEgg = rd32(read, ctx, anchor + L.daycareEggOff) != 0;
+    return true;
+}
+
+// The egg in party slot `addr` as an encounter: species, PID, IVs ... and
+// whether it hatches shiny for this player (Gen 4 decides with the hatcher's IDs)
+bool eggMon(const Tracker& t, ReadFn read, void* ctx, uint32_t anchor, uint32_t addr, DecodedMon& m)
+{
+    uint8_t data[128], st[20];
+    if (!decryptMon(read, ctx, addr, data, st, false))
+        return false;
+    auto u8 = [&](int off) { return (unsigned)data[off - 0x08]; };
+    auto u16 = [&](int off) { return (unsigned)(data[off - 0x08] | (data[off - 0x07] << 8)); };
+    m = DecodedMon();
+    m.pid = rd32(read, ctx, addr);
+    m.species = (uint16_t)u16(0x08);
+    if (m.species < 1 || m.species > 493)
+        return false;
+    m.otId = rd16(read, ctx, anchor + t.game->trainerIdOff);
+    m.otSid = rd16(read, ctx, anchor + t.game->trainerIdOff + 2);
+    m.level = 1;
+    m.gender = (uint8_t)((u8(0x40) >> 1) & 3);
+    m.ivs = ((uint32_t)u16(0x38) | ((uint32_t)u16(0x3A) << 16)) & 0x3FFFFFFFu;
+    m.ability = (uint8_t)u8(0x15);
+    m.item = 0;
+    m.shiny = (uint16_t)(m.otId ^ m.otSid ^ (m.pid >> 16) ^ (m.pid & 0xFFFF)) < 8;
     return true;
 }
 
@@ -1357,11 +1385,8 @@ EggStep eggAfterFrame(Tracker& t, ReadFn read, void* ctx)
 
     case EggHunt::Walk:
     {
-        // round done: party full, nothing left to hatch
-        bool anyEgg = false;
-        for (unsigned i = 0; i < r.count; i++)
-            anyEgg |= r.eggs[i];
-        if (r.count >= 6 && !anyEgg)
+        // round done: party full, every egg checked
+        if (r.count >= 6)
         {
             e.cycles++;
             PC_LOG("egg hunt: round %u done, no shiny - reset", (unsigned)e.cycles);
@@ -1397,12 +1422,26 @@ EggStep eggAfterFrame(Tracker& t, ReadFn read, void* ctx)
     {
         if (!e.gotEgg && r.count > e.pickupCount)
         {
-            PC_LOG("egg hunt: egg received (party %u)", r.count);
             e.gotEgg = true;
             e.sinceProgress = 0;
             e.frame = 0;
             e.nextPress = 0;
             e.pressLeft = 0;
+            DecodedMon m;
+            const uint32_t addr = r.anchor + t.game->partyDataOff + (r.count - 1) * kMonSize;
+            if (eggMon(t, read, ctx, r.anchor, addr, m))
+            {
+                e.hatched++;
+                PC_LOG("egg hunt: egg #%u (species %u, PID %08X)%s", (unsigned)e.hatched, m.species, (unsigned)m.pid,
+                       m.shiny ? " SHINY" : "");
+                report(t, m);
+                if (m.shiny)
+                    return eggStopWith(e, EggStop::Shiny);
+            }
+            else
+            {
+                PC_LOG("egg hunt: egg received, data not readable");
+            }
         }
         if (e.gotEgg)
         {
@@ -1431,17 +1470,8 @@ EggStep eggAfterFrame(Tracker& t, ReadFn read, void* ctx)
         const bool finished = s >= 0 && (unsigned)s < r.count && r.sums[s] != e.hatchSum && !r.eggs[s];
         if (finished || e.frame > kEggHatchMax)
         {
-            DecodedMon m;
-            const uint32_t addr = r.anchor + t.game->partyDataOff + (uint32_t)s * kMonSize;
-            if (s >= 0 && decodePartyMon(read, ctx, addr, m))
-            {
-                e.hatched++;
-                e.sinceProgress = 0;
-                PC_LOG("egg hunt: hatched #%u%s", m.species, m.shiny ? " SHINY" : "");
-                report(t, m);
-                if (m.shiny)
-                    return eggStopWith(e, EggStop::Shiny);
-            }
+            // already checked (and counted) when it was picked up
+            PC_LOG("egg hunt: an egg hatched on the way");
             eggPhase(e, EggHunt::AfterHatch);
             break;
         }

@@ -352,6 +352,11 @@ class EmulatorActivity : AppCompatActivity() {
             viewModel.takeScreenshot()
         }
 
+        override fun onEggHunt() {
+            // WatermelonDS-LAN: answer arrives as an emulator event (toast)
+            MelonEmulator.toggleEggHunt()
+        }
+
         override fun onRewind() {
             viewModel.onOpenRewind()
         }
@@ -482,6 +487,22 @@ class EmulatorActivity : AppCompatActivity() {
     private var lastOverlayHatY = 0f
     private var lastPauseMenu: me.magnum.melonds.ui.emulator.model.PauseMenu? = null
     private var rewindOpenedFromPauseMenu = false
+
+    // WatermelonDS-LAN: egg hunt answers from the native side (MelonInstance.cpp)
+    private fun eggHuntMessage(code: Int): String = when (code) {
+        1 -> getString(R.string.egg_hunt_on)
+        3 -> getString(R.string.egg_hunt_shiny)
+        4 -> getString(R.string.egg_hunt_not_in_game)
+        5 -> getString(R.string.egg_hunt_no_bike)
+        6 -> getString(R.string.egg_hunt_blocked)
+        7 -> getString(R.string.egg_hunt_no_eggs)
+        10 -> getString(R.string.egg_hunt_not_supported)
+        11 -> getString(R.string.egg_hunt_not_loaded)
+        12 -> getString(R.string.egg_hunt_party_full)
+        13 -> getString(R.string.egg_hunt_shiny_hold)
+        in 21..Int.MAX_VALUE -> getString(R.string.egg_hunt_round, code - 20)
+        else -> getString(R.string.egg_hunt_off)
+    }
 
     private fun pushConsoleOverlay(node: ConsoleOverlayNode) {
         activeOverlays.addActiveOverlay(EmulatorOverlay.PAUSE_MENU)
@@ -935,6 +956,7 @@ class EmulatorActivity : AppCompatActivity() {
                         ToastEvent.QuickLoadSuccessful -> getString(R.string.loaded) to Toast.LENGTH_SHORT
                         ToastEvent.PokeCounterShinyPaused -> getString(R.string.pokecounter_shiny_paused) to Toast.LENGTH_LONG
                         ToastEvent.PokeCounterShinyProtected -> getString(R.string.pokecounter_shiny_protected) to Toast.LENGTH_LONG
+                        is ToastEvent.EggHunt -> eggHuntMessage(it.code) to Toast.LENGTH_LONG
                         is ToastEvent.ScreenshotSaved -> getString(R.string.screenshot_saved, it.fileName) to Toast.LENGTH_SHORT
                         ToastEvent.ScreenshotFailed -> getString(R.string.screenshot_failed) to Toast.LENGTH_LONG
                         ToastEvent.RewindNotEnabled -> getString(R.string.rewind_not_enabled) to Toast.LENGTH_SHORT

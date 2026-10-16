@@ -36,7 +36,9 @@ enum class Input(val keyCode: Int) {
     HOLD_FAST_FORWARD(-1),
     CYCLE_LAYOUT(-1),
     EXIT_GAME(-1),
-    SCREENSHOT(-1);
+    SCREENSHOT(-1),
+    // WatermelonDS-LAN: Pokémon egg hunt at the day care (PokeCounter.h)
+    EGG_HUNT(-1);
 
     val isSystemInput: Boolean
         get() = keyCode != -1

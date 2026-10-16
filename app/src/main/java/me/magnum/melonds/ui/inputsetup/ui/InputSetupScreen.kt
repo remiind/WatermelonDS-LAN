@@ -518,6 +518,7 @@ private fun getInputName(input: Input): String? {
         Input.CYCLE_LAYOUT -> R.string.input_cycle_layout
         Input.EXIT_GAME -> R.string.input_exit_game
         Input.SCREENSHOT -> R.string.input_screenshot
+        Input.EGG_HUNT -> R.string.input_egg_hunt
         else -> return null
     }
 

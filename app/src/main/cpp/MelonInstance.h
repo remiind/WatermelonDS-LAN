@@ -53,6 +53,11 @@ public:
     void start();
     void reset();
     void requestRtcSync();
+    // WatermelonDS-LAN: egg hunt (PokeCounter.h), toggled from the UI thread,
+    // carried out on the emulator thread; a reset it needs is done by the JNI
+    // side from another thread (like the reset button)
+    void requestEggHuntToggle() { eggHuntToggleRequested.store(true, std::memory_order_release); }
+    bool takeEggHuntResetRequest() { return eggHuntResetRequested.exchange(false, std::memory_order_acq_rel); }
 
     melonDS::u32 runFrame(bool frameskipSolicitado = false);
 
@@ -391,6 +396,11 @@ private:
     void setBatteryLevels();
     void setDateTime();
     std::atomic<bool> rtcSyncRequested{false};
+    std::atomic<bool> eggHuntToggleRequested{false};
+    std::atomic<bool> eggHuntResetRequested{false};
+    bool eggHuntKeysApplied = false;
+    void eggHuntBeforeFrame();
+    void eggHuntAfterFrame();
     void saveRewindState(RewindSaveState* rewindSaveState);
     void clearLatchedSoftPackedFrameSnapshot();
 

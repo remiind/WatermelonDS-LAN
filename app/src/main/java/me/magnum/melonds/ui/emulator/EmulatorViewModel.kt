@@ -2831,6 +2831,7 @@ class EmulatorViewModel @Inject constructor(
                         _toastEvent.tryEmit(ToastEvent.PokeCounterShinyPaused)
                         pauseEmulator(true)
                     }
+                    is EmulatorEvent.EggHunt -> _toastEvent.tryEmit(ToastEvent.EggHunt(it.code))
                     is EmulatorEvent.RendererInitFailed -> {
                         didReceiveRendererInitFailure = true
                         val failedRenderer = it.renderer

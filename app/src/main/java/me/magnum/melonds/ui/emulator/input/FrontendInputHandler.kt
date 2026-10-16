@@ -19,6 +19,7 @@ abstract class FrontendInputHandler : IInputListener {
             Input.CYCLE_LAYOUT -> onCycleLayout()
             Input.EXIT_GAME -> onExitGame()
             Input.SCREENSHOT -> onScreenshot()
+            Input.EGG_HUNT -> onEggHunt()
             else -> {}
         }
     }
@@ -47,4 +48,5 @@ abstract class FrontendInputHandler : IInputListener {
     abstract fun onCycleLayout()
     abstract fun onExitGame()
     abstract fun onScreenshot()
+    abstract fun onEggHunt()
 }

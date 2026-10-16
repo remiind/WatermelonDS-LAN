@@ -3621,9 +3621,11 @@ u32 MelonInstance::runFrame(bool frameskipSolicitado)
             (void)deferredRenderer->SetFrameSubmissionDeferred(false);
     });
     processExactLiveGuideBeforeRunFrame();
+    eggHuntBeforeFrame();
     u32 nLines = nds->RunFrame();
     // WatermelonDS-LAN: report wild HGSS encounters to the PokéCounter display
     PokeCounter::onFrame(*nds);
+    eggHuntAfterFrame();
     if (lowLatencyEnabled && currentRenderer == Renderer::Vulkan)
     {
         if (auto* renderer2D = dynamic_cast<GPU2D::SoftRenderer*>(&nds->GPU.GetRenderer2D()))
@@ -4217,6 +4219,74 @@ std::string MelonInstance::getExactLiveGuideStatusJson() const
     }
     json << "]}";
     return json.str();
+}
+
+// ---- WatermelonDS-LAN: egg hunt (PokeCounter.h) -------------------------------
+// Events to the UI (EVENT_POKECOUNTER_EGG_HUNT, 106) with a code:
+//   1 on, 2 off by hand, 3 shiny egg, 4 save not found after the reset,
+//   5 no bike, 6 stuck, 7 no eggs, 10 game not supported, 11 save not loaded,
+//   12 party full, 13 a shiny is on hold, 20 + n: round n done
+namespace MelonDSAndroid { void fireEmulatorEvent(int type, int dataLength, void* data); }
+
+static void eggHuntEvent(int code)
+{
+    MelonDSAndroid::fireEmulatorEvent(106, sizeof(code), &code);
+}
+
+void MelonInstance::eggHuntBeforeFrame()
+{
+    if (eggHuntToggleRequested.exchange(false, std::memory_order_acq_rel))
+    {
+        if (PokeCounter::eggActive(*nds))
+        {
+            PokeCounter::eggStop(*nds);
+            eggHuntEvent(2);
+        }
+        else if (!PokeCounter::gameSupported(*nds))
+            eggHuntEvent(10);
+        else if (PokeCounter::shinyHold(*nds))
+            eggHuntEvent(13);
+        else if (const char* err = PokeCounter::eggStart(*nds))
+            eggHuntEvent(std::strstr(err, "party") ? 12 : 11);
+        else
+        {
+            eggHuntEvent(1);
+            eggHuntResetRequested.store(true, std::memory_order_release);
+        }
+    }
+    const u32 keys = PokeCounter::eggKeys(*nds);
+    if (keys || eggHuntKeysApplied)
+    {
+        nds->SetKeyMask(inputMask & ~keys);
+        eggHuntKeysApplied = keys != 0;
+    }
+}
+
+void MelonInstance::eggHuntAfterFrame()
+{
+    if (!PokeCounter::eggActive(*nds))
+        return;
+    switch (PokeCounter::eggAfterFrame(*nds))
+    {
+    case PokeCounter::EggStep::Reset:
+        eggHuntResetRequested.store(true, std::memory_order_release);
+        if (PokeCounter::eggCycles(*nds) > 0)
+            eggHuntEvent(20 + (int)PokeCounter::eggCycles(*nds));
+        break;
+    case PokeCounter::EggStep::Stopped:
+        switch (PokeCounter::eggStopReason(*nds))
+        {
+        case PokeCounter::EggStop::Shiny: eggHuntEvent(3); break;
+        case PokeCounter::EggStop::NotInGame: eggHuntEvent(4); break;
+        case PokeCounter::EggStop::NoBike: eggHuntEvent(5); break;
+        case PokeCounter::EggStop::Blocked: eggHuntEvent(6); break;
+        case PokeCounter::EggStop::NoEggs: eggHuntEvent(7); break;
+        default: eggHuntEvent(2); break;
+        }
+        break;
+    default:
+        break;
+    }
 }
 
 void MelonInstance::pressKey(u32 key)

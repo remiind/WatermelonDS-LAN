@@ -278,6 +278,9 @@ namespace MelonDSAndroid {
     extern void pause();
     extern void resume();
     extern void requestRtcSync();
+    // WatermelonDS-LAN: egg hunt on/off (PokeCounter.h); a reset it asks for
+    extern void requestEggHuntToggle();
+    extern bool takeEggHuntResetRequest();
     extern void reset();
     extern bool saveState(const char* path);
     extern bool loadState(const char* path);

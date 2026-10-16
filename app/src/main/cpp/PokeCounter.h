@@ -93,11 +93,11 @@ void releaseAllShinyHolds();
 
 // ---- egg hunt (Masuda method) -------------------------------------------------
 // Save on the long path next to the day care (HGSS: Route 34, D/P/Pt: Solaceon
-// Town) with the parents left there, a Flame Body / Magma Armor Pokémon and
-// free slots in the party, the bike registered on Y. The hunt resets, bikes up
-// and down, fetches every egg, clicks through the hatches (no nickname),
-// reports every hatched Pokémon like an encounter and stops on a shiny; when
-// the party is full and everything has hatched it resets and starts over.
+// Town) with the parents left there, free slots in the party and the bike
+// registered on Y. The hunt resets, bikes up and down, fetches every egg and
+// checks it right away (the PID is fixed in Gen 4 when the egg is made, so no
+// hatching is needed), reports every egg like an encounter and stops on a
+// shiny egg; with a full party it resets and starts over.
 enum class EggStep { None, Reset, Stopped };
 enum class EggStop { None, ByUser, Shiny, NotInGame, NoBike, Blocked, NoEggs };
 // Emulator thread. eggStart returns an error text or nullptr (then the caller
@@ -109,7 +109,7 @@ uint32_t eggKeys(melonDS::NDS& nds);          // DS key bits to press in the nex
 EggStep eggAfterFrame(melonDS::NDS& nds);     // after onFrame()
 EggStop eggStopReason(melonDS::NDS& nds);
 uint32_t eggCycles(melonDS::NDS& nds);        // rounds without a shiny
-uint32_t eggHatched(melonDS::NDS& nds);
+uint32_t eggHatched(melonDS::NDS& nds);       // eggs checked
 
 // ---- exposed for unit tests ------------------------------------------------
 

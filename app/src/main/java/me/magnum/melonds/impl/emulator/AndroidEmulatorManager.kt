@@ -96,6 +96,7 @@ class AndroidEmulatorManager(
             EmulatorEventType.EventRumbleStart -> _emulatorEvents.tryEmit(EmulatorEvent.RumbleStart(data.getInt()))
             EmulatorEventType.EventRumbleStop -> _emulatorEvents.tryEmit(EmulatorEvent.RumbleStop)
             EmulatorEventType.EventPokeCounterShiny -> _emulatorEvents.tryEmit(EmulatorEvent.PokeCounterShiny)
+            EmulatorEventType.EventEggHunt -> _emulatorEvents.tryEmit(EmulatorEvent.EggHunt(data.getInt()))
             EmulatorEventType.EventEmulatorStop -> getStopReason(data.getInt())?.let { _emulatorEvents.tryEmit(EmulatorEvent.Stop(it)) }
             EmulatorEventType.EventRendererInitFailed -> getRenderer(data.getInt())?.let { _emulatorEvents.tryEmit(EmulatorEvent.RendererInitFailed(it)) }
             EmulatorEventType.EventVulkanCompileProgress -> _emulatorEvents.tryEmit(

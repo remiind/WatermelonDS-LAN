@@ -31,6 +31,7 @@ class ControllerConfiguration(
             Input.CYCLE_LAYOUT,
             Input.EXIT_GAME,
             Input.SCREENSHOT,
+            Input.EGG_HUNT,
         )
     }
 

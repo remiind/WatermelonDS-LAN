@@ -1615,6 +1615,19 @@ namespace MelonDSAndroid
         instance->reset();
     }
 
+    void requestEggHuntToggle()
+    {
+        auto currentInstance = GetInstanceSnapshot();
+        if (currentInstance)
+            currentInstance->requestEggHuntToggle();
+    }
+
+    bool takeEggHuntResetRequest()
+    {
+        auto currentInstance = GetInstanceSnapshot();
+        return currentInstance && currentInstance->takeEggHuntResetRequest();
+    }
+
     bool saveState(const char* path)
     {
         if (instance == nullptr)

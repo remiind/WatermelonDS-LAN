@@ -262,6 +262,12 @@ object MelonEmulator {
      */
     external fun isShinyHoldActive(): Boolean
 
+    /**
+     * WatermelonDS-LAN: egg hunt (Masuda) on/off. The native side answers with
+     * an [me.magnum.melonds.impl.emulator.EmulatorEventType.EventEggHunt] event.
+     */
+    external fun toggleEggHunt()
+
     external fun requestRtcSync()
 
     external fun debugStepFrame(): Boolean

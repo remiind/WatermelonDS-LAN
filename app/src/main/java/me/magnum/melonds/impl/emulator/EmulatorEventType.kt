@@ -34,6 +34,10 @@ enum class EmulatorEventType(val event: Int) {
      * the emulation thread paused itself. No data.
      */
     EventPokeCounterShiny(105),
+    /**
+     * WatermelonDS-LAN: egg hunt state. Data: code (`i32`), see MelonInstance.cpp.
+     */
+    EventEggHunt(106),
 
     /**
      * RA achievement primed. Data:
