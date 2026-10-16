@@ -4226,11 +4226,12 @@ std::string MelonInstance::getExactLiveGuideStatusJson() const
 //   1 on, 2 off by hand, 3 shiny egg, 4 save not found after the reset,
 //   5 no bike, 6 stuck, 7 no eggs, 10 game not supported, 11 save not loaded,
 //   12 party full, 13 a shiny is on hold, 20 + n: round n done
-namespace MelonDSAndroid { void fireEmulatorEvent(int type, int dataLength, void* data); }
+// (this file is inside namespace MelonDSAndroid already)
+void fireEmulatorEvent(int type, int dataLength, void* data);
 
 static void eggHuntEvent(int code)
 {
-    MelonDSAndroid::fireEmulatorEvent(106, sizeof(code), &code);
+    fireEmulatorEvent(106, sizeof(code), &code);
 }
 
 void MelonInstance::eggHuntBeforeFrame()
