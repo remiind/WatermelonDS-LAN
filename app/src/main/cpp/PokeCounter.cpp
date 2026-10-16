@@ -121,6 +121,60 @@ struct Pending
     bool sent = false;
 };
 
+// ---- egg hunt (Masuda): state, see "Egg hunt" below ------------------------
+struct EggLayout
+{
+    const char* prefix;
+    uint32_t trainerX, trainerZ;   // absolute (+ language offset): u32, tile in the upper half
+    int32_t mapHeaderOff;          // anchor + this: u16 map id
+    int32_t bikeOff;               // anchor + this: u8, 1 = on the bike
+    int32_t gearOff;               // anchor + this: u8 bike gear (D/P/Pt), 0 = none (HGSS)
+    int32_t daycareEggOff;         // anchor + this: u32, non-zero = the day-care man has an egg
+    int16_t pathX, pathZ1, pathZ2; // long path next to the day care: x, both ends (z)
+    int16_t pickZ, pickX;          // to the day-care man: first z, then x, then A
+    bool hgss;
+};
+
+struct Waypoint
+{
+    char axis;     // 'x' or 'z'
+    int16_t value;
+};
+
+struct EggHunt
+{
+    enum Phase { Off, Boot, Settle, Mount, Walk, Pickup, Hatching, AfterHatch };
+    Phase phase = Off;
+    Phase resume = Walk;        // after a hatch
+    const EggLayout* L = nullptr;
+    // start point (where the game was saved)
+    uint16_t map = 0;
+    int16_t x0 = 0, z0 = 0;
+    unsigned party0 = 0;
+    // progress
+    uint32_t frame = 0;         // in the current phase
+    uint32_t sinceReset = 0;
+    uint32_t sinceProgress = 0; // no egg picked up / hatched
+    uint32_t stuck = 0;
+    int16_t lastX = 0, lastZ = 0;
+    uint32_t nextPress = 0, pressLeft = 0, pressKey = 0;
+    int mountTries = 0, bootFails = 0;
+    Waypoint route[8];
+    int routeLen = 0, routePos = 0, routeSign = 0;
+    bool towardZ2 = true;
+    bool eggs[6] = {};
+    uint16_t sums[6] = {};
+    unsigned count = 0;
+    int hatchSlot = -1;
+    uint16_t hatchSum = 0;
+    unsigned pickupCount = 0;
+    bool gotEgg = false;
+    bool seenBlank = false;     // the reset has happened (the save is not loaded)
+    uint32_t keys = 0;          // for the next frame
+    uint32_t cycles = 0, hatched = 0;
+    int stopReason = 0;
+};
+
 } // namespace
 
 // One tracker per emulator instance (the desktop version runs several
@@ -163,6 +217,9 @@ struct Tracker
     std::atomic<bool> shinyEvent{false};
     std::atomic<bool> shinyHold{false};
     uint64_t shinyAtMs = 0;   // when the shiny was reported
+
+    // egg hunt (Masuda method)
+    EggHunt egg;
 
     // every reported wild Pokémon (auto-hunt, see AutoHunt.h)
     std::atomic<uint32_t> encounterSeq{0};
@@ -984,6 +1041,463 @@ uint8_t ramRead(void* ctx, uint32_t addr)
 
 } // namespace
 
+// ---------------------------------------------------------------------------
+// Egg hunt (Masuda method), Gen 4. The player saves on the long path next to
+// the day care (HGSS: Route 34, D/P/Pt: Solaceon Town) with the parents in
+// the day care, a Flame Body / Magma Armor Pokémon and free slots in the
+// party and the bike on Y. Per window, toggled by a hotkey:
+//   reset -> A through title and "Continue" -> bike up and down the path ->
+//   when the day-care man has an egg: ride to him and take it -> every hatch
+//   is clicked through (B: no nickname) and reported like an encounter ->
+//   shiny: stop (the shiny auto-pause holds the window), party full and
+//   everything hatched: reset and start over.
+// Coordinates, pointers and routes from pokebot-nds (methods/hgss.lua,
+// gen_iv.lua, pt.lua; MIT).
+// ---------------------------------------------------------------------------
+
+namespace
+{
+
+constexpr EggLayout kEggGames[] = {
+    {"IPK", 0x21DA6F4, 0x21DA6FC, -0x22DA4, -0x22D34, 0, -0x22804, 358, 380, 410, 410, 364, true},
+    {"IPG", 0x21DA6F4, 0x21DA6FC, -0x22DA4, -0x22D34, 0, -0x22804, 358, 380, 410, 410, 364, true},
+    {"CPU", 0x21C5CE4, 0x21C5CEC, 0x1294, 0x1324, 0x1320, 0x1840, 562, 630, 675, 648, 556, false},
+    {"ADA", 0x21CEF70, 0x21CEF78, 0x11B2, 0x1242, 0x123E, 0x156E, 562, 630, 675, 648, 556, false},
+    {"APA", 0x21CEF70, 0x21CEF78, 0x11B2, 0x1242, 0x123E, 0x156E, 562, 630, 675, 648, 556, false},
+};
+
+constexpr uint32_t kKeyA = 1u << 0, kKeyB = 1u << 1, kKeyRight = 1u << 4, kKeyLeft = 1u << 5,
+                   kKeyUp = 1u << 6, kKeyDown = 1u << 7, kKeyY = 1u << 11;
+constexpr uint32_t kEggBootMax = 4000;          // frames from reset to the overworld
+constexpr uint32_t kEggHatchMax = 2400;         // hatch animation and texts
+constexpr uint32_t kEggPickupMax = 2400;        // talking to the day-care man
+constexpr uint32_t kEggStuckMax = 1200;         // not moving while holding a direction
+constexpr uint32_t kEggNoProgressMax = 60 * 60 * 15;   // 15 game minutes without an egg or a hatch
+
+struct EggRam
+{
+    uint16_t map = 0;
+    int16_t x = 0, z = 0;
+    unsigned count = 0;
+    bool eggs[6] = {};
+    uint16_t sums[6] = {};
+    bool bike = false;
+    uint8_t gear = 1;
+    bool daycareEgg = false;
+    uint32_t anchor = 0;
+};
+
+uint32_t eggRand(uint32_t lo, uint32_t hi)
+{
+    std::lock_guard<std::mutex> lk(gRngLock);
+    return lo + (uint32_t)(gRng() % (hi - lo + 1));
+}
+
+const EggLayout* eggLayoutFor(const Tracker& t)
+{
+    for (const EggLayout& L : kEggGames)
+        if (std::strncmp(t.gameCode, L.prefix, 3) == 0)
+            return &L;
+    return nullptr;
+}
+
+bool readEggRam(const Tracker& t, ReadFn read, void* ctx, EggRam& r)
+{
+    const GameLayout& G = *t.game;
+    const EggLayout& L = *t.egg.L;
+    r = EggRam();
+    const uint32_t anchor = rd32(read, ctx, G.anchorPtr + t.offset);
+    if (!isMainRam(anchor))
+        return false;
+    r.anchor = anchor;
+    r.map = rd16(read, ctx, anchor + L.mapHeaderOff);
+    r.x = (int16_t)(rd32(read, ctx, L.trainerX + t.offset) >> 16);
+    r.z = (int16_t)(rd32(read, ctx, L.trainerZ + t.offset) >> 16);
+    r.count = read(ctx, anchor + G.partyCountOff);
+    if (r.count < 1 || r.count > 6)
+        return false;
+    for (unsigned i = 0; i < r.count; i++)
+    {
+        const uint32_t addr = anchor + G.partyDataOff + i * kMonSize;
+        uint8_t data[128], st[20];
+        if (!decryptMon(read, ctx, addr, data, st, false))
+            return false;   // being written (hatch, new egg)
+        const uint32_t iv = (uint32_t)data[0x30] | ((uint32_t)data[0x31] << 8) | ((uint32_t)data[0x32] << 16) | ((uint32_t)data[0x33] << 24);
+        r.eggs[i] = (iv & 0x40000000u) != 0;
+        r.sums[i] = rd16(read, ctx, addr + 6);
+    }
+    r.bike = read(ctx, anchor + L.bikeOff) == 1;
+    r.gear = L.gearOff ? read(ctx, anchor + L.gearOff) : 1;
+    r.daycareEgg = rd32(read, ctx, anchor + L.daycareEggOff) != 0;
+    return true;
+}
+
+// Short presses of `key` at random gaps (like a person, gives every run its own timing)
+uint32_t eggPress(EggHunt& e, uint32_t key, uint32_t gapMin = 8, uint32_t gapMax = 30)
+{
+    if (e.pressLeft == 0 && e.frame >= e.nextPress)
+    {
+        e.pressLeft = 3;
+        e.pressKey = key;
+        e.nextPress = e.frame + 3 + eggRand(gapMin, gapMax);
+    }
+    if (e.pressLeft == 0)
+        return 0;
+    e.pressLeft--;
+    return e.pressKey;
+}
+
+void eggPhase(EggHunt& e, EggHunt::Phase p)
+{
+    e.phase = p;
+    e.frame = 0;
+    e.pressLeft = 0;
+    e.nextPress = 0;
+    e.stuck = 0;
+}
+
+void eggRoute(EggHunt& e, std::initializer_list<Waypoint> w)
+{
+    e.routeLen = 0;
+    for (const Waypoint& p : w)
+        e.route[e.routeLen++] = p;
+    e.routePos = 0;
+    e.routeSign = 0;
+}
+
+// Direction toward the current waypoint, or 0 once it is reached (or passed:
+// the bike can run one tile further after letting go).
+uint32_t eggSteer(EggHunt& e, const EggRam& r, bool& done)
+{
+    done = false;
+    while (e.routePos < e.routeLen)
+    {
+        const Waypoint& w = e.route[e.routePos];
+        const int cur = w.axis == 'x' ? r.x : r.z;
+        const int diff = w.value - cur;
+        if (e.routeSign == 0)
+            e.routeSign = diff > 0 ? 1 : (diff < 0 ? -1 : 0);
+        if (diff == 0 || (e.routeSign != 0 && diff * e.routeSign < 0))
+        {
+            e.routePos++;
+            e.routeSign = 0;
+            continue;
+        }
+        if (w.axis == 'x')
+            return diff > 0 ? kKeyRight : kKeyLeft;
+        return diff > 0 ? kKeyDown : kKeyUp;
+    }
+    done = true;
+    return 0;
+}
+
+EggStep eggStopWith(EggHunt& e, EggStop why)
+{
+    e.stopReason = (int)why;
+    e.phase = EggHunt::Off;
+    e.keys = 0;
+    return EggStep::Stopped;
+}
+
+EggStep eggResetWith(EggHunt& e)
+{
+    eggPhase(e, EggHunt::Boot);
+    e.sinceReset = 0;
+    e.seenBlank = false;
+    e.mountTries = 0;
+    e.count = 0;
+    e.keys = 0;
+    e.nextPress = eggRand(0, 240);   // random start delay: every reset its own RNG seed
+    return EggStep::Reset;
+}
+
+} // namespace
+
+const char* eggStart(Tracker& t, ReadFn read, void* ctx)
+{
+    EggHunt& e = t.egg;
+    if (!t.supported || !t.game)
+        return "Egg hunt: only for Pokemon Diamond, Pearl, Platinum, HeartGold, SoulSilver";
+    e.L = eggLayoutFor(t);
+    if (!e.L)
+        return "Egg hunt: game not supported";
+    EggRam r;
+    if (!readEggRam(t, read, ctx, r))
+        return "Egg hunt: load your save first (standing on the path next to the day care)";
+    if (r.count >= 6)
+        return "Egg hunt: the party is full - leave room for the eggs";
+    e.map = r.map;
+    e.x0 = r.x;
+    e.z0 = r.z;
+    e.party0 = r.count;
+    e.cycles = 0;
+    e.hatched = 0;
+    e.bootFails = 0;
+    e.sinceProgress = 0;
+    e.stopReason = 0;
+    PC_LOG("egg hunt: start map %u at %d,%d, party %u", r.map, r.x, r.z, r.count);
+    eggResetWith(e);
+    return nullptr;
+}
+
+void eggStop(Tracker& t)
+{
+    eggStopWith(t.egg, EggStop::ByUser);
+}
+
+bool eggActive(const Tracker& t) { return t.egg.phase != EggHunt::Off; }
+uint32_t eggKeys(const Tracker& t) { return t.egg.phase != EggHunt::Off ? t.egg.keys : 0; }
+EggStop eggStopReason(const Tracker& t) { return (EggStop)t.egg.stopReason; }
+uint32_t eggCycles(const Tracker& t) { return t.egg.cycles; }
+uint32_t eggHatched(const Tracker& t) { return t.egg.hatched; }
+
+EggStep eggAfterFrame(Tracker& t, ReadFn read, void* ctx)
+{
+    EggHunt& e = t.egg;
+    if (e.phase == EggHunt::Off)
+        return EggStep::None;
+    e.frame++;
+    e.sinceProgress++;
+    e.keys = 0;
+
+    EggRam r;
+    const bool ok = readEggRam(t, read, ctx, r);
+
+    if (e.phase == EggHunt::Boot)
+    {
+        // the frontend may reset a little later (Android: from another
+        // thread): nothing happens until the save is gone
+        if (!e.seenBlank)
+        {
+            e.seenBlank = !ok;
+            if (!e.seenBlank && ++e.sinceReset > 600)
+                return eggResetWith(e);   // the reset got lost: ask again
+            if (e.seenBlank)
+                e.sinceReset = 0;
+            return EggStep::None;
+        }
+        e.sinceReset++;
+        if (ok && r.map == e.map && r.x == e.x0 && r.z == e.z0 && r.count == e.party0)
+        {
+            eggPhase(e, EggHunt::Settle);
+            return EggStep::None;
+        }
+        if (e.sinceReset > kEggBootMax)
+        {
+            if (++e.bootFails >= 3)
+                return eggStopWith(e, EggStop::NotInGame);
+            return eggResetWith(e);
+        }
+        e.keys = eggPress(e, kKeyA);
+        return EggStep::None;
+    }
+    if (!ok)
+    {
+        // party data being rewritten (egg received, hatch starting): keep
+        // clicking through a hatch, otherwise wait a frame
+        if (e.phase == EggHunt::Hatching)
+            e.keys = eggPress(e, kKeyB, 4, 10);
+        return EggStep::None;
+    }
+    e.bootFails = 0;
+
+    // hatch started: an egg slot is no egg any more
+    if (e.phase != EggHunt::Hatching && e.phase != EggHunt::AfterHatch && e.phase != EggHunt::Settle)
+    {
+        for (unsigned i = 0; i < r.count && i < e.count; i++)
+        {
+            if (e.eggs[i] && !r.eggs[i])
+            {
+                eggPhase(e, EggHunt::Hatching);
+                e.hatchSlot = (int)i;
+                e.hatchSum = r.sums[i];
+                break;
+            }
+        }
+    }
+
+    switch (e.phase)
+    {
+    case EggHunt::Settle:
+        // the save is loaded; Platinum shows its journal first (B closes it,
+        // and does nothing on the overworld)
+        if (e.frame == 40)
+            e.keys = kKeyB;
+        if (e.frame >= 90)
+        {
+            eggPhase(e, EggHunt::Mount);
+            e.mountTries = 0;
+        }
+        break;
+
+    case EggHunt::Mount:
+        if (!r.bike)
+        {
+            if (e.frame % 70 == 1)
+            {
+                if (++e.mountTries > 4)
+                    return eggStopWith(e, EggStop::NoBike);
+                e.keys = kKeyY;
+            }
+            break;
+        }
+        if (e.L->gearOff && r.gear != 1)
+        {
+            if (e.frame % 40 == 1)
+            {
+                if (++e.mountTries > 8)
+                    return eggStopWith(e, EggStop::NoBike);
+                e.keys = kKeyB;   // fast gear
+            }
+            break;
+        }
+        eggPhase(e, EggHunt::Walk);
+        eggRoute(e, {{'x', e.L->pathX}, {'z', e.towardZ2 ? e.L->pathZ2 : e.L->pathZ1}});
+        break;
+
+    case EggHunt::Walk:
+    {
+        // round done: party full, nothing left to hatch
+        bool anyEgg = false;
+        for (unsigned i = 0; i < r.count; i++)
+            anyEgg |= r.eggs[i];
+        if (r.count >= 6 && !anyEgg)
+        {
+            e.cycles++;
+            PC_LOG("egg hunt: round %u done, no shiny - reset", (unsigned)e.cycles);
+            for (unsigned i = 0; i < 6; i++) e.eggs[i] = false;
+            return eggResetWith(e);
+        }
+        if (!r.bike)
+        {
+            eggPhase(e, EggHunt::Mount);
+            break;
+        }
+        bool done;
+        e.keys = eggSteer(e, r, done);
+        if (done)
+        {
+            // at an end of the path: an egg waiting and room for it -> fetch it
+            if (r.daycareEgg && r.count < 6)
+            {
+                eggPhase(e, EggHunt::Pickup);
+                eggRoute(e, {{'z', e.L->pickZ}, {'x', e.L->pickX}});
+                e.pickupCount = r.count;
+                e.gotEgg = false;
+                break;
+            }
+            e.towardZ2 = !e.towardZ2;
+            eggRoute(e, {{'z', e.towardZ2 ? e.L->pathZ2 : e.L->pathZ1}});
+            e.keys = eggSteer(e, r, done);
+        }
+        break;
+    }
+
+    case EggHunt::Pickup:
+    {
+        if (!e.gotEgg && r.count > e.pickupCount)
+        {
+            PC_LOG("egg hunt: egg received (party %u)", r.count);
+            e.gotEgg = true;
+            e.sinceProgress = 0;
+            e.frame = 0;
+            e.nextPress = 0;
+            e.pressLeft = 0;
+        }
+        if (e.gotEgg)
+        {
+            // close the texts, then back to the path
+            if (e.frame < 90)
+            {
+                e.keys = eggPress(e, kKeyB, 6, 14);
+                break;
+            }
+            eggPhase(e, EggHunt::Walk);
+            eggRoute(e, {{'x', e.L->pathX}, {'z', e.towardZ2 ? e.L->pathZ2 : e.L->pathZ1}});
+            break;
+        }
+        if (e.frame > kEggPickupMax)
+            return eggStopWith(e, EggStop::Blocked);
+        bool done;
+        e.keys = eggSteer(e, r, done);
+        if (done)
+            e.keys = eggPress(e, kKeyA);   // "yes, I'll take the egg"
+        break;
+    }
+
+    case EggHunt::Hatching:
+    {
+        const int s = e.hatchSlot;
+        const bool finished = s >= 0 && (unsigned)s < r.count && r.sums[s] != e.hatchSum && !r.eggs[s];
+        if (finished || e.frame > kEggHatchMax)
+        {
+            DecodedMon m;
+            const uint32_t addr = r.anchor + t.game->partyDataOff + (uint32_t)s * kMonSize;
+            if (s >= 0 && decodePartyMon(read, ctx, addr, m))
+            {
+                e.hatched++;
+                e.sinceProgress = 0;
+                PC_LOG("egg hunt: hatched #%u%s", m.species, m.shiny ? " SHINY" : "");
+                report(t, m);
+                if (m.shiny)
+                    return eggStopWith(e, EggStop::Shiny);
+            }
+            eggPhase(e, EggHunt::AfterHatch);
+            break;
+        }
+        e.keys = eggPress(e, kKeyB, 4, 10);
+        break;
+    }
+
+    case EggHunt::AfterHatch:
+        // the "nickname?" question and the last texts: B (= no)
+        if (e.frame < 150)
+        {
+            e.keys = eggPress(e, kKeyB, 6, 14);
+            break;
+        }
+        eggPhase(e, EggHunt::Mount);
+        e.mountTries = 0;
+        break;
+
+    default:
+        break;
+    }
+
+    // stuck (a phone call, a text box, something in the way)
+    if (e.keys & (kKeyUp | kKeyDown | kKeyLeft | kKeyRight))
+    {
+        if (r.x == e.lastX && r.z == e.lastZ)
+            e.stuck++;
+        else
+            e.stuck = 0;
+        if (e.stuck > kEggStuckMax)
+            return eggStopWith(e, EggStop::Blocked);
+        if (e.stuck > 90 && e.stuck % 45 < 3)
+            e.keys = e.L->hgss ? kKeyB : kKeyA;   // close the text (B on HGSS: declines phone calls)
+    }
+    else
+    {
+        e.stuck = 0;
+    }
+    e.lastX = r.x;
+    e.lastZ = r.z;
+
+    if (e.sinceProgress > kEggNoProgressMax)
+        return eggStopWith(e, EggStop::NoEggs);
+
+    if (e.phase != EggHunt::Hatching)
+    {
+        for (unsigned i = 0; i < 6; i++)
+        {
+            e.eggs[i] = i < r.count && r.eggs[i];
+            e.sums[i] = i < r.count ? r.sums[i] : 0;
+        }
+        e.count = r.count;
+    }
+    return EggStep::None;
+}
+
 // Core per-frame logic, separated from melonDS for testing
 void processFrame(Tracker& t, ReadFn read, void* ctx)
 {
@@ -1211,6 +1725,17 @@ bool takeShinyEvent(melonDS::NDS& nds) { return takeShinyEvent(trackerFor(&nds))
 uint32_t encounterSeq(melonDS::NDS& nds) { return trackerFor(&nds).encounterSeq.load(); }
 bool lastEncounterShiny(melonDS::NDS& nds) { return trackerFor(&nds).lastShiny.load(); }
 bool gameSupported(melonDS::NDS& nds) { return trackerFor(&nds).supported; }
+
+#ifndef POKECOUNTER_NO_MELONDS
+const char* eggStart(melonDS::NDS& nds) { return eggStart(trackerFor(&nds), ramRead, &nds); }
+void eggStop(melonDS::NDS& nds) { eggStop(trackerFor(&nds)); }
+bool eggActive(melonDS::NDS& nds) { return eggActive(trackerFor(&nds)); }
+uint32_t eggKeys(melonDS::NDS& nds) { return eggKeys(trackerFor(&nds)); }
+EggStep eggAfterFrame(melonDS::NDS& nds) { return eggAfterFrame(trackerFor(&nds), ramRead, &nds); }
+EggStop eggStopReason(melonDS::NDS& nds) { return eggStopReason(trackerFor(&nds)); }
+uint32_t eggCycles(melonDS::NDS& nds) { return eggCycles(trackerFor(&nds)); }
+uint32_t eggHatched(melonDS::NDS& nds) { return eggHatched(trackerFor(&nds)); }
+#endif
 bool shinyHold(melonDS::NDS& nds) { return shinyHold(trackerFor(&nds)); }
 void releaseShinyHold(melonDS::NDS& nds) { releaseShinyHold(trackerFor(&nds)); }
 

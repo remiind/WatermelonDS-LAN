@@ -91,6 +91,26 @@ bool takeAnyShinyEvent();
 bool anyShinyHold();
 void releaseAllShinyHolds();
 
+// ---- egg hunt (Masuda method) -------------------------------------------------
+// Save on the long path next to the day care (HGSS: Route 34, D/P/Pt: Solaceon
+// Town) with the parents left there, a Flame Body / Magma Armor Pokémon and
+// free slots in the party, the bike registered on Y. The hunt resets, bikes up
+// and down, fetches every egg, clicks through the hatches (no nickname),
+// reports every hatched Pokémon like an encounter and stops on a shiny; when
+// the party is full and everything has hatched it resets and starts over.
+enum class EggStep { None, Reset, Stopped };
+enum class EggStop { None, ByUser, Shiny, NotInGame, NoBike, Blocked, NoEggs };
+// Emulator thread. eggStart returns an error text or nullptr (then the caller
+// resets the console).
+const char* eggStart(melonDS::NDS& nds);
+void eggStop(melonDS::NDS& nds);
+bool eggActive(melonDS::NDS& nds);
+uint32_t eggKeys(melonDS::NDS& nds);          // DS key bits to press in the next frame
+EggStep eggAfterFrame(melonDS::NDS& nds);     // after onFrame()
+EggStop eggStopReason(melonDS::NDS& nds);
+uint32_t eggCycles(melonDS::NDS& nds);        // rounds without a shiny
+uint32_t eggHatched(melonDS::NDS& nds);
+
 // ---- exposed for unit tests ------------------------------------------------
 
 using ReadFn = uint8_t (*)(void* ctx, uint32_t addr);
@@ -123,6 +143,15 @@ void setGame(Tracker& t, const char* gameCode);
 // One emulated frame of battle tracking, reading RAM through `read`.
 void processFrame(Tracker& t, ReadFn read, void* ctx);
 void resetState(Tracker& t);
+// Egg hunt core (see above), reading RAM through `read`
+const char* eggStart(Tracker& t, ReadFn read, void* ctx);
+void eggStop(Tracker& t);
+bool eggActive(const Tracker& t);
+uint32_t eggKeys(const Tracker& t);
+EggStep eggAfterFrame(Tracker& t, ReadFn read, void* ctx);
+EggStop eggStopReason(const Tracker& t);
+uint32_t eggCycles(const Tracker& t);
+uint32_t eggHatched(const Tracker& t);
 // Checks the PC boxes in a DS save image (at most every 2 s, see above).
 void processSave(Tracker& t, const uint8_t* save, uint32_t len);
 // Level of a Pokémon from its experience points (Gen 4 growth rates).
