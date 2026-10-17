@@ -129,7 +129,8 @@ struct EggLayout
     int32_t mapHeaderOff;          // anchor + this: u16 map id
     int32_t bikeOff;               // anchor + this: u8, 1 = on the bike
     int32_t gearOff;               // anchor + this: u8 bike gear (D/P/Pt), 0 = none (HGSS)
-    int32_t daycareEggOff;         // anchor + this: u32, non-zero = the day-care man has an egg
+    int32_t daycareEggOff;         // anchor + this: u32, non-zero = the day-care man has an egg (its PID)
+    int32_t daycareMonOff;         // anchor + this: the two parents, 236 bytes each (PK4 stored first)
     int16_t pathX, pathZ1, pathZ2; // long path next to the day care: x, both ends (z)
     int16_t pickZ, pickX;          // to the day-care man: first z, then x, then A
     bool hgss;
@@ -529,18 +530,21 @@ void pumpNetwork(Tracker& t)
     p.nextMs = now + std::min<uint64_t>(kRetryMaxMs, (uint64_t)kRetryMs * (1 + p.tries / 6));
 }
 
-void report(Tracker& t, const DecodedMon& m)
+void report(Tracker& t, const DecodedMon& m, bool egg = false, bool masuda = false)
 {
-    char json[224];
+    char json[256];
     const char gender = m.gender == 0 ? 'M' : (m.gender == 1 ? 'F' : 'N');
     std::snprintf(json, sizeof(json),
                   "{\"t\":\"enc\",\"sp\":%u,\"lv\":%u,\"g\":\"%c\",\"shiny\":%s,\"pid\":%u,\"eid\":%u,"
-                  "\"ivs\":%u,\"ab\":%u,\"it\":%u,\"tsv\":%u,\"src\":\"%s\"}",
+                  "\"ivs\":%u,\"ab\":%u,\"it\":%u,\"tsv\":%u,\"src\":\"%s\"%s%s}",
                   m.species, m.level, gender, m.shiny ? "true" : "false", m.pid, (unsigned)randomEid(),
                   (unsigned)m.ivs, m.ability, m.item,
                   // Wild Pokémon carry the player's IDs: TID ^ SID, so the display can show
                   // the shiny value (TID ^ SID ^ PID high ^ PID low, shiny below 8)
-                  (unsigned)(m.otId ^ m.otSid), t.gameCode);
+                  (unsigned)(m.otId ^ m.otSid), t.gameCode,
+                  // an egg from the day care; "masuda": the parents come from games in
+                  // different languages, so the PID was rolled five times (display odds)
+                  egg ? ",\"egg\":1" : "", masuda ? ",\"masuda\":1" : "");
     PC_LOG("wild encounter: %s", json);
     t.lastShiny.store(m.shiny);
     t.encounterSeq.fetch_add(1);
@@ -1062,11 +1066,14 @@ namespace
 {
 
 constexpr EggLayout kEggGames[] = {
-    {"IPK", 0x21DA6F4, 0x21DA6FC, -0x22DA4, -0x22D34, 0, -0x22804, 358, 380, 410, 410, 364, true},
-    {"IPG", 0x21DA6F4, 0x21DA6FC, -0x22DA4, -0x22D34, 0, -0x22804, 358, 380, 410, 410, 364, true},
-    {"CPU", 0x21C5CE4, 0x21C5CEC, 0x1294, 0x1324, 0x1320, 0x1840, 562, 630, 675, 648, 556, false},
-    {"ADA", 0x21CEF70, 0x21CEF78, 0x11B2, 0x1242, 0x123E, 0x156E, 562, 630, 675, 648, 556, false},
-    {"APA", 0x21CEF70, 0x21CEF78, 0x11B2, 0x1242, 0x123E, 0x156E, 562, 630, 675, 648, 556, false},
+    // day-care parents: PKHeX DaycareOffset in the general block (HGSS 0x15FC, Pt 0x1654,
+    // D/P 0x141C) + where the general block lies relative to the anchor (party - 0x98/0xA0);
+    // checked: DaycareEnd lands exactly on pokebot's daycare_egg pointer
+    {"IPK", 0x21DA6F4, 0x21DA6FC, -0x22DA4, -0x22D34, 0, -0x22804, -0x229DC, 358, 380, 410, 410, 364, true},
+    {"IPG", 0x21DA6F4, 0x21DA6FC, -0x22DA4, -0x22D34, 0, -0x22804, -0x229DC, 358, 380, 410, 410, 364, true},
+    {"CPU", 0x21C5CE4, 0x21C5CEC, 0x1294, 0x1324, 0x1320, 0x1840, 0x1668, 562, 630, 675, 648, 556, false},
+    {"ADA", 0x21CEF70, 0x21CEF78, 0x11B2, 0x1242, 0x123E, 0x156E, 0x1396, 562, 630, 675, 648, 556, false},
+    {"APA", 0x21CEF70, 0x21CEF78, 0x11B2, 0x1242, 0x123E, 0x156E, 0x1396, 562, 630, 675, 648, 556, false},
 };
 
 constexpr uint32_t kKeyA = 1u << 0, kKeyB = 1u << 1, kKeyRight = 1u << 4, kKeyLeft = 1u << 5,
@@ -1158,6 +1165,25 @@ bool eggMon(const Tracker& t, ReadFn read, void* ctx, uint32_t anchor, uint32_t 
     m.item = 0;
     m.shiny = (uint16_t)(m.otId ^ m.otSid ^ (m.pid >> 16) ^ (m.pid & 0xFFFF)) < 8;
     return true;
+}
+
+// Masuda: both parents in the day care and from games in different languages
+// (language byte 0x17 of the PK4)
+bool eggMasuda(const Tracker& t, ReadFn read, void* ctx, uint32_t anchor)
+{
+    int lang[2];
+    for (int i = 0; i < 2; i++)
+    {
+        uint8_t data[128], st[20];
+        const uint32_t addr = anchor + t.egg.L->daycareMonOff + i * kMonSize;
+        if (!decryptMon(read, ctx, addr, data, st, false))
+            return false;
+        const unsigned sp = (unsigned)(data[0] | (data[1] << 8));
+        if (sp < 1 || sp > 493)
+            return false;
+        lang[i] = data[0x17 - 0x08];
+    }
+    return lang[0] != lang[1];
 }
 
 // Short presses of `key` at random gaps (like a person, gives every run its own timing)
@@ -1432,9 +1458,10 @@ EggStep eggAfterFrame(Tracker& t, ReadFn read, void* ctx)
             if (eggMon(t, read, ctx, r.anchor, addr, m))
             {
                 e.hatched++;
-                PC_LOG("egg hunt: egg #%u (species %u, PID %08X)%s", (unsigned)e.hatched, m.species, (unsigned)m.pid,
-                       m.shiny ? " SHINY" : "");
-                report(t, m);
+                const bool masuda = eggMasuda(t, read, ctx, r.anchor);
+                PC_LOG("egg hunt: egg #%u (species %u, PID %08X%s)%s", (unsigned)e.hatched, m.species, (unsigned)m.pid,
+                       masuda ? ", Masuda" : "", m.shiny ? " SHINY" : "");
+                report(t, m, true, masuda);
                 if (m.shiny)
                     return eggStopWith(e, EggStop::Shiny);
             }
