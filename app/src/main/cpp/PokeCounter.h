@@ -32,6 +32,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <string>
 
 namespace melonDS { class NDS; }
 
@@ -65,6 +66,15 @@ void setAutoPauseEnabled(bool on);
 // POKECOUNTER_TEAM=0 switches it off.
 bool teamEnabled();
 void setTeamEnabled(bool on);
+
+// ---- EV yield --------------------------------------------------------------
+// When a wild battle starts, the frontend shows which EVs the Pokémon gives
+// ("EVs: +2 Sp.-Angriff"). takeEvSpecies returns the species once (0 = none).
+// On by default, POKECOUNTER_EVS=0 switches it off.
+bool evsEnabled();
+int takeEvSpecies(melonDS::NDS& nds);
+uint32_t evYield(int species);        // 2 bits per stat: HP, Atk, Def, SpA, SpD, Spe
+std::string evText(int species);      // "EVs: +1 KP, +1 Initiative"
 
 // ---- PC boxes ---------------------------------------------------------------
 // The 18 boxes of the last in-game save (save memory, not RAM) are checked
@@ -143,6 +153,7 @@ void setGame(Tracker& t, const char* gameCode);
 // One emulated frame of battle tracking, reading RAM through `read`.
 void processFrame(Tracker& t, ReadFn read, void* ctx);
 void resetState(Tracker& t);
+int takeEvSpecies(Tracker& t);
 // Egg hunt core (see above), reading RAM through `read`
 const char* eggStart(Tracker& t, ReadFn read, void* ctx);
 void eggStop(Tracker& t);

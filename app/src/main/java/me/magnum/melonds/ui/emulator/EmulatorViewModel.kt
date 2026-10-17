@@ -2832,6 +2832,7 @@ class EmulatorViewModel @Inject constructor(
                         pauseEmulator(true)
                     }
                     is EmulatorEvent.EggHunt -> _toastEvent.tryEmit(ToastEvent.EggHunt(it.code))
+                    is EmulatorEvent.EvYield -> _toastEvent.tryEmit(ToastEvent.EvYield(it.yield))
                     is EmulatorEvent.RendererInitFailed -> {
                         didReceiveRendererInitFailure = true
                         val failedRenderer = it.renderer

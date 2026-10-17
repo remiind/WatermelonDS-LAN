@@ -15,6 +15,7 @@ sealed class ToastEvent {
     data object PokeCounterShinyPaused : ToastEvent()
     data object PokeCounterShinyProtected : ToastEvent()
     data class EggHunt(val code: Int) : ToastEvent()
+    data class EvYield(val yield: Int) : ToastEvent()
     data class ScreenshotSaved(val fileName: String) : ToastEvent()
     data object ScreenshotFailed : ToastEvent()
     data object CannotLoadSaveStatesWhenRAHardcoreIsEnabled : ToastEvent()

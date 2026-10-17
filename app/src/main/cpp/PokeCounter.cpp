@@ -222,6 +222,10 @@ struct Tracker
     // egg hunt (Masuda method)
     EggHunt egg;
 
+    // EV yield of the last wild Pokémon, for the frontend's on-screen message
+    std::mutex evLock;
+    int evSpecies = 0;
+
     // every reported wild Pokémon (auto-hunt, see AutoHunt.h)
     std::atomic<uint32_t> encounterSeq{0};
     std::atomic<bool> lastShiny{false};
@@ -530,8 +534,70 @@ void pumpNetwork(Tracker& t)
     p.nextMs = now + std::min<uint64_t>(kRetryMaxMs, (uint64_t)kRetryMs * (1 + p.tries / 6));
 }
 
+// EV yield per species (National Dex 1..493): 3 hex digits, 2 bits per stat
+// (HP, Atk, Def, SpA, SpD, Spe); PokeAPI pokemon_stats.csv
+const char kEvYield[] =
+    "0401401804004400c0010110300001020180400020108400800c00400800400800004008"
+    "800c0001002000100200300400800c0020034005000020034008000400800c0004018100"
+    "4404008004008000400800040080040084008000300400800c000400800c00400800c100"
+    "2000100200304008000010200400800040040081002000010050100200400800c0010100"
+    "200004008400800010080010020008200002010020010008002010002040050004008400"
+    "800200004080800080008404400008002001100002800008040010020010008800002300"
+    "0c00c000400800c0c00031001102104004400c0004014018004800001002100200004008"
+    "c000010024001000011002000404400400800c0300002003020300100800c00400040080"
+    "400001002080200400200100044002080010020001010020004008004008110008400004"
+    "008040020004005110040044400200020040080144001014080004400004200040400400"
+    "02000384000921000400800c300300003400800c0004004400c00400800c004008400800"
+    "0010200c002030010020030001000800c4008004000200400800c0400140001008001800"
+    "003010800002001002003001002001010400401014014010020030400800400800400400"
+    "400400080001002004008001002040044020100200040004404804040044100200008044"
+    "080008001002004008100200100200004008400200001100004008100110002140008001"
+    "00100200100200301001408001140000402000c0100200300303001203000c00c000c048"
+    "0034440040140184004404440400800c040080000c00100801000800400800c0400c0004"
+    "008010020100200044400110400400800040080001002800001002400800140008400800"
+    "04040000201011001010000100411000400800c001004044010020010020004008008400"
+    "8001000040444040c000300c02000c0c018000802008002000c0c000c210210800440120"
+    "1440480c00c00c000c003300001003480003003";
+
+} // namespace
+
+uint32_t evYield(int species)
+{
+    if (species < 1 || species > 493)
+        return 0;
+    char hex[4] = {kEvYield[(species - 1) * 3], kEvYield[(species - 1) * 3 + 1], kEvYield[(species - 1) * 3 + 2], 0};
+    return (uint32_t)std::strtoul(hex, nullptr, 16);
+}
+
+std::string evText(int species)
+{
+    static const char* const kNames[6] = {"KP", "Angriff", "Verteidigung", "Sp.-Angriff", "Sp.-Verteidigung", "Initiative"};
+    const uint32_t y = evYield(species);
+    std::string out;
+    for (int i = 0; i < 6; i++)
+    {
+        const unsigned v = (y >> (2 * i)) & 3;
+        if (!v)
+            continue;
+        out += out.empty() ? "EVs: +" : ", +";
+        out += std::to_string(v);
+        out += ' ';
+        out += kNames[i];
+    }
+    return out;
+}
+
+namespace
+{
+
 void report(Tracker& t, const DecodedMon& m, bool egg = false, bool masuda = false)
 {
+    // wild Pokémon: which EVs it gives, shown on screen by the frontend
+    if (!egg && evsEnabled())
+    {
+        std::lock_guard<std::mutex> lk(t.evLock);
+        t.evSpecies = m.species;
+    }
     char json[256];
     const char gender = m.gender == 0 ? 'M' : (m.gender == 1 ? 'F' : 'N');
     std::snprintf(json, sizeof(json),
@@ -1724,6 +1790,31 @@ namespace
 std::atomic<int> gBoxes{-1};
 }
 
+namespace
+{
+std::atomic<int> gEvs{-1};
+}
+
+bool evsEnabled()
+{
+    int v = gEvs.load();
+    if (v < 0)
+    {
+        const char* env = std::getenv("POKECOUNTER_EVS");
+        v = (env && (env[0] == '0' || env[0] == 'n' || env[0] == 'N' || env[0] == 'f' || env[0] == 'F')) ? 0 : 1;
+        gEvs.store(v);
+    }
+    return v != 0;
+}
+
+int takeEvSpecies(Tracker& t)
+{
+    std::lock_guard<std::mutex> lk(t.evLock);
+    const int sp = t.evSpecies;
+    t.evSpecies = 0;
+    return sp;
+}
+
 bool boxesEnabled()
 {
     int v = gBoxes.load();
@@ -1782,6 +1873,7 @@ bool takeShinyEvent(melonDS::NDS& nds) { return takeShinyEvent(trackerFor(&nds))
 uint32_t encounterSeq(melonDS::NDS& nds) { return trackerFor(&nds).encounterSeq.load(); }
 bool lastEncounterShiny(melonDS::NDS& nds) { return trackerFor(&nds).lastShiny.load(); }
 bool gameSupported(melonDS::NDS& nds) { return trackerFor(&nds).supported; }
+int takeEvSpecies(melonDS::NDS& nds) { return takeEvSpecies(trackerFor(&nds)); }
 
 #ifndef POKECOUNTER_NO_MELONDS
 const char* eggStart(melonDS::NDS& nds) { return eggStart(trackerFor(&nds), ramRead, &nds); }

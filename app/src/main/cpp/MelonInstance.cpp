@@ -3626,6 +3626,15 @@ u32 MelonInstance::runFrame(bool frameskipSolicitado)
     // WatermelonDS-LAN: report wild HGSS encounters to the PokéCounter display
     PokeCounter::onFrame(*nds);
     eggHuntAfterFrame();
+    // wild Pokémon: which EVs it gives (EVENT_POKECOUNTER_EV_YIELD, 107: species, yield)
+    if (const int evSpecies = PokeCounter::takeEvSpecies(*nds))
+    {
+        if (!PokeCounter::eggActive(*nds))
+        {
+            int evData[2] = {evSpecies, (int)PokeCounter::evYield(evSpecies)};
+            fireEmulatorEvent(107, sizeof(evData), evData);
+        }
+    }
     if (lowLatencyEnabled && currentRenderer == Renderer::Vulkan)
     {
         if (auto* renderer2D = dynamic_cast<GPU2D::SoftRenderer*>(&nds->GPU.GetRenderer2D()))

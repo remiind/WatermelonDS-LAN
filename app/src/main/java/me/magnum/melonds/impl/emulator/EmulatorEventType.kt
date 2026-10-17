@@ -38,6 +38,11 @@ enum class EmulatorEventType(val event: Int) {
      * WatermelonDS-LAN: egg hunt state. Data: code (`i32`), see MelonInstance.cpp.
      */
     EventEggHunt(106),
+    /**
+     * WatermelonDS-LAN: a wild battle started. Data: species (`i32`), EV yield (`i32`,
+     * 2 bits per stat: HP, Atk, Def, SpA, SpD, Spe).
+     */
+    EventEvYield(107),
 
     /**
      * RA achievement primed. Data:

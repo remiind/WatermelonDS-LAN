@@ -488,6 +488,16 @@ class EmulatorActivity : AppCompatActivity() {
     private var lastPauseMenu: me.magnum.melonds.ui.emulator.model.PauseMenu? = null
     private var rewindOpenedFromPauseMenu = false
 
+    // WatermelonDS-LAN: EVs of the wild Pokémon ("EVs: +2 Sp.-Angriff")
+    private fun evYieldMessage(yield: Int): String {
+        val names = listOf("KP", "Angriff", "Verteidigung", "Sp.-Angriff", "Sp.-Verteidigung", "Initiative")
+        val parts = names.mapIndexedNotNull { i, name ->
+            val v = (yield shr (2 * i)) and 3
+            if (v > 0) "+$v $name" else null
+        }
+        return "EVs: " + parts.joinToString(", ")
+    }
+
     // WatermelonDS-LAN: egg hunt answers from the native side (MelonInstance.cpp)
     private fun eggHuntMessage(code: Int): String = when (code) {
         1 -> getString(R.string.egg_hunt_on)
@@ -957,6 +967,7 @@ class EmulatorActivity : AppCompatActivity() {
                         ToastEvent.PokeCounterShinyPaused -> getString(R.string.pokecounter_shiny_paused) to Toast.LENGTH_LONG
                         ToastEvent.PokeCounterShinyProtected -> getString(R.string.pokecounter_shiny_protected) to Toast.LENGTH_LONG
                         is ToastEvent.EggHunt -> eggHuntMessage(it.code) to Toast.LENGTH_LONG
+                        is ToastEvent.EvYield -> evYieldMessage(it.yield) to Toast.LENGTH_SHORT
                         is ToastEvent.ScreenshotSaved -> getString(R.string.screenshot_saved, it.fileName) to Toast.LENGTH_SHORT
                         ToastEvent.ScreenshotFailed -> getString(R.string.screenshot_failed) to Toast.LENGTH_LONG
                         ToastEvent.RewindNotEnabled -> getString(R.string.rewind_not_enabled) to Toast.LENGTH_SHORT

@@ -9,6 +9,8 @@ sealed class EmulatorEvent {
     data object PokeCounterShiny : EmulatorEvent()
     /** WatermelonDS-LAN: egg hunt state changed (code, see MelonInstance.cpp). */
     data class EggHunt(val code: Int) : EmulatorEvent()
+    /** WatermelonDS-LAN: wild battle started; EV yield, 2 bits per stat (HP, Atk, Def, SpA, SpD, Spe). */
+    data class EvYield(val species: Int, val yield: Int) : EmulatorEvent()
     data class RendererInitFailed(val renderer: VideoRenderer) : EmulatorEvent()
     data class VulkanCompileProgress(
         val stageId: Int,
